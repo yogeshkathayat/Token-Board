@@ -8,6 +8,7 @@ const COMMANDS = {
   doctor: () => require('./commands/doctor.js'),
   uninstall: () => require('./commands/uninstall.js'),
   openrouter: () => require('./commands/openrouter.js'),
+  cursor: () => require('./commands/cursor.js'),
   daemon: () => require('./commands/daemon.js'),
   link: () => require('./commands/link.js'),
 };
@@ -31,6 +32,8 @@ Commands:
   uninstall               Remove all hooks and config
   openrouter login        Store your OpenRouter API key for usage pulls
   openrouter logout       Forget the stored OpenRouter API key
+  cursor login            Paste your Cursor session cookie for accurate tracking
+  cursor logout           Forget the stored Cursor cookie
 
 Global flags:
   --debug, -d             Verbose logging

@@ -9,6 +9,7 @@ const { paths } = require('./paths.js');
 
 const SERVICE = 'tokenboard';
 const ACCOUNT_OPENROUTER = 'openrouter';
+const ACCOUNT_CURSOR_COOKIE = 'cursor-cookie';
 
 let keytar;
 function loadKeytar() {
@@ -113,4 +114,9 @@ module.exports = {
   getOpenRouterKey: () => getSecret(ACCOUNT_OPENROUTER),
   deleteOpenRouterKey: () => deleteSecret(ACCOUNT_OPENROUTER),
   hasOpenRouterKey: () => hasSecret(ACCOUNT_OPENROUTER),
+
+  setCursorCookie: (v) => setSecret(ACCOUNT_CURSOR_COOKIE, v),
+  getCursorCookie: () => getSecret(ACCOUNT_CURSOR_COOKIE),
+  deleteCursorCookie: () => deleteSecret(ACCOUNT_CURSOR_COOKIE),
+  hasCursorCookie: () => hasSecret(ACCOUNT_CURSOR_COOKIE),
 };
