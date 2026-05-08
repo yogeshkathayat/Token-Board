@@ -27,30 +27,28 @@ export function WidgetsPage() {
     query: { from: daysAgo(6), to: TODAY(), tz: TZ },
   });
 
-  const [downloading, setDownloading] = useState(false);
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const installCommand = `curl -fsSL ${origin}/install-widget.sh | sh -s -- ${origin}`;
+
   const [copied, setCopied] = useState(false);
 
-  function downloadWidget() {
-    setDownloading(true);
-    // Public asset bundled at build time. Direct download via <a> with download attr.
+  async function copyAndOpenTerminal() {
+    try {
+      await navigator.clipboard.writeText(installCommand);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+
+  function downloadManually() {
     const a = document.createElement('a');
     a.href = '/macos-widget.tar.gz';
     a.download = 'tokenboard-macos-widget.tar.gz';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(() => setDownloading(false), 800);
-  }
-
-  async function copyInstall() {
-    const cmd = `curl -fsSL ${window.location.origin}/macos-widget.tar.gz | tar -xzf - && cd menubar && ./build.sh install`;
-    try {
-      await navigator.clipboard.writeText(cmd);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* clipboard unavailable */
-    }
   }
 
   return (
@@ -64,14 +62,6 @@ export function WidgetsPage() {
             Your token usage, pinned to your menu bar.
           </p>
         </div>
-        <button
-          onClick={downloadWidget}
-          disabled={downloading}
-          className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 transition hover:bg-slate-800 disabled:opacity-60 dark:bg-slate-100 dark:text-slate-900 dark:shadow-black/40 dark:hover:bg-white"
-        >
-          <DownloadIcon />
-          {downloading ? 'Downloading…' : 'Download Mac App'}
-        </button>
       </header>
 
       <section>
@@ -82,72 +72,97 @@ export function WidgetsPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-          Install
-        </h2>
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <ol className="space-y-4 text-sm">
-            <Step
-              n={1}
-              title="Download the bundle"
-              body={
-                <>
-                  Click <strong>Download Mac App</strong> above. You'll get a small
-                  tarball (≈ 13 KB) containing the Swift source and an installer
-                  script. No code-signing fuss because you're building it yourself
-                  on your Mac.
-                </>
-              }
-            />
-            <Step
-              n={2}
-              title="Extract and install"
-              body={
-                <div className="space-y-2">
-                  <div>In Terminal, navigate to where the file landed (usually <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs dark:bg-slate-800">~/Downloads</code>) and run:</div>
-                  <CodeBlock onCopy={copyInstall} copied={copied}>
-                    {`tar -xzf tokenboard-macos-widget.tar.gz
-cd menubar
-./build.sh install`}
-                  </CodeBlock>
-                  <p className="text-xs text-slate-500">
-                    Builds with <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">swiftc</code> (ships with Xcode Command Line Tools), copies the binary to <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">~/Library/Application Support/TokenBoard/</code>, and registers a launchd agent so it auto-starts on login.
-                  </p>
+        <div className="rounded-2xl bg-gradient-to-br from-brand-500 via-brand-600 to-cyan-500 p-px shadow-xl shadow-brand-500/20">
+          <div className="rounded-2xl bg-white p-6 dark:bg-slate-950 sm:p-8">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs font-bold uppercase tracking-wider text-brand-600 dark:text-brand-400">
+                  Install in one paste
                 </div>
-              }
-            />
-            <Step
-              n={3}
-              title="Connect it"
-              body={
-                <>
-                  Click the new <span className="inline-flex items-center gap-1 align-middle"><BarIconInline /></span> icon in your menu bar → click the gear ⚙️ → paste your access token. Server URL is auto-filled from the CLI's config if you have one, otherwise enter it manually. The bar will start showing today's count within seconds.
-                </>
-              }
-            />
-          </ol>
+                <h2 className="mt-1 text-xl font-bold text-slate-900 dark:text-slate-100">
+                  Copy this, paste in Terminal, hit Enter
+                </h2>
+              </div>
+              <TerminalIcon />
+            </div>
+
+            <button
+              onClick={copyAndOpenTerminal}
+              className="group mt-5 flex w-full items-center gap-3 rounded-xl border border-slate-300 bg-slate-900 p-4 text-left transition hover:border-brand-500 hover:shadow-md dark:border-slate-700"
+            >
+              <span className="font-mono text-xs text-slate-400">$</span>
+              <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-slate-100 sm:text-sm">
+                {installCommand}
+              </code>
+              <span
+                className={
+                  'shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold transition ' +
+                  (copied
+                    ? 'bg-green-500 text-white'
+                    : 'bg-white text-slate-900 group-hover:bg-brand-500 group-hover:text-white')
+                }
+              >
+                {copied ? '✓ Copied!' : 'Copy'}
+              </span>
+            </button>
+
+            <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500 dark:text-slate-400">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Builds with <code className="rounded bg-slate-100 px-1 py-0.5 font-mono dark:bg-slate-800">swiftc</code> — no Xcode app needed
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Auto-starts on login via launchd
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Takes ~10 seconds
+              </span>
+            </div>
+
+            <details className="mt-5 text-sm">
+              <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200">
+                Or do it manually →
+              </summary>
+              <div className="mt-3 space-y-2 rounded-lg bg-slate-50 p-4 text-xs text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+                <p>
+                  <button
+                    onClick={downloadManually}
+                    className="font-semibold text-brand-700 underline-offset-2 hover:underline dark:text-brand-300"
+                  >
+                    Download the bundle (13 KB)
+                  </button>{' '}
+                  and run:
+                </p>
+                <pre className="overflow-x-auto rounded-md bg-slate-900 p-3 font-mono text-xs leading-relaxed text-slate-100">{`tar -xzf tokenboard-macos-widget.tar.gz
+cd menubar
+./build.sh install`}</pre>
+              </div>
+            </details>
+          </div>
         </div>
       </section>
 
       <section>
         <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-          Also included
+          What you get
         </h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <FeatureCard
             icon="📊"
             title="Today's count in the bar"
-            body="Compact format — `1.7B`, `203M` — resets at local midnight."
+            body="Compact format like 1.7B or 203M. Resets at local midnight."
           />
           <FeatureCard
             icon="🪟"
             title="Popover summary"
-            body="Today / 7-Day / 30-Day / Total stat cards, plus per-source totals and top models."
+            body="Today / 7-Day / 30-Day / Total stat cards plus per-source totals and top models."
           />
           <FeatureCard
             icon="🔄"
             title="Auto refresh"
-            body="Polls /api/v1/usage/summary every 5 minutes. Click the ↻ to force-refresh."
+            body="Polls /api/v1/usage/summary every 5 minutes. Click ↻ to force-refresh."
           />
           <FeatureCard
             icon="🔐"
@@ -163,10 +178,24 @@ cd menubar
         </h2>
         <ul className="space-y-2 rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
           <li>• macOS 13 (Ventura) or newer — Apple Silicon or Intel</li>
-          <li>• Xcode Command Line Tools (<code className="rounded bg-slate-100 px-1 dark:bg-slate-800">xcode-select --install</code>)</li>
-          <li>• Connection to this server URL</li>
-          <li>• An access token (paste in Settings; same one you'd use for the dashboard API)</li>
+          <li>
+            • Xcode Command Line Tools — install with{' '}
+            <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs dark:bg-slate-800">
+              xcode-select --install
+            </code>
+          </li>
+          <li>• Network access to this server URL</li>
+          <li>• An access token (paste in the bar's Settings after install)</li>
         </ul>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          Uninstall
+        </h2>
+        <pre className="overflow-x-auto rounded-2xl border border-slate-200 bg-slate-900 p-4 font-mono text-xs leading-relaxed text-slate-100 dark:border-slate-700">
+          ~/Library/Application\ Support/TokenBoard/build.sh uninstall
+        </pre>
       </section>
     </div>
   );
@@ -212,7 +241,6 @@ function PreviewCard({ today, sevenDay }: { today?: string; sevenDay?: string })
 }
 
 function Sparkline() {
-  // Smooth synthetic curve (just for the preview card — real chart uses /usage/daily).
   const path = 'M0,30 C30,28 50,22 70,18 S110,12 140,10 S180,14 210,8 S250,6 280,4';
   return (
     <svg viewBox="0 0 280 40" className="h-12 w-full">
@@ -223,46 +251,15 @@ function Sparkline() {
         </linearGradient>
       </defs>
       <path d={`${path} L280,40 L0,40 Z`} fill="url(#spark-grad)" />
-      <path d={path} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      <path
+        d={path}
+        fill="none"
+        stroke="#3b82f6"
+        strokeWidth="2"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
     </svg>
-  );
-}
-
-function Step({ n, title, body }: { n: number; title: string; body: React.ReactNode }) {
-  return (
-    <li className="flex gap-4">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-500 text-xs font-bold text-white">
-        {n}
-      </span>
-      <div className="flex-1 pt-0.5">
-        <div className="font-semibold text-slate-900 dark:text-slate-100">{title}</div>
-        <div className="mt-1 text-slate-600 dark:text-slate-300">{body}</div>
-      </div>
-    </li>
-  );
-}
-
-function CodeBlock({
-  children,
-  onCopy,
-  copied,
-}: {
-  children: string;
-  onCopy: () => void;
-  copied: boolean;
-}) {
-  return (
-    <div className="relative overflow-hidden rounded-lg bg-slate-900 dark:border dark:border-slate-700">
-      <button
-        onClick={onCopy}
-        className="absolute right-2 top-2 rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-slate-200 opacity-80 transition hover:opacity-100"
-      >
-        {copied ? 'Copied!' : 'Copy'}
-      </button>
-      <pre className="overflow-x-auto p-4 pr-20 font-mono text-xs leading-relaxed text-slate-100">
-        {children}
-      </pre>
-    </div>
   );
 }
 
@@ -280,20 +277,16 @@ function FeatureCard({ icon, title, body }: { icon: string; title: string; body:
   );
 }
 
-function DownloadIcon() {
+function TerminalIcon() {
   return (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-      <path d="M10 3a1 1 0 011 1v7.586l2.293-2.293a1 1 0 011.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L9 11.586V4a1 1 0 011-1zM3 16a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" />
-    </svg>
-  );
-}
-
-function BarIconInline() {
-  return (
-    <svg viewBox="0 0 18 14" className="h-3.5 w-4 text-slate-700 dark:text-slate-200" fill="currentColor">
-      <rect x="1" y="8" width="3" height="6" rx="1" />
-      <rect x="6" y="4" width="3" height="10" rx="1" />
-      <rect x="11" y="0" width="3" height="14" rx="1" />
-    </svg>
+    <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-slate-100 dark:bg-slate-100 dark:text-slate-900">
+      <svg viewBox="0 0 20 20" fill="currentColor" className="h-6 w-6">
+        <path
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d="M2 4a2 2 0 012-2h12a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V4zm3.3 3.3a1 1 0 011.4 0l3 3a1 1 0 010 1.4l-3 3a1 1 0 11-1.4-1.4L7.6 11 5.3 8.7a1 1 0 010-1.4zM10 14a1 1 0 011-1h3a1 1 0 110 2h-3a1 1 0 01-1-1z"
+        />
+      </svg>
+    </span>
   );
 }
