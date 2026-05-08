@@ -24,12 +24,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         if let button = statusItem.button {
-            button.image = Self.barIcon()
-            button.image?.isTemplate = true
-            button.imagePosition = .imageLeading
+            // Prefer SF Symbol — guaranteed to render across macOS versions and
+            // auto-tints with the menu bar. Fall back to a text-only marker so
+            // the user always sees *something*, even if the symbol is missing.
+            if let img = NSImage(systemSymbolName: "chart.bar.fill", accessibilityDescription: "Token Board") {
+                img.isTemplate = true
+                button.image = img
+                button.imagePosition = .imageLeading
+            }
             button.action = #selector(togglePopover(_:))
             button.target = self
-            button.title = "  …"
+            // Always populate title so the bar item is visible from first launch,
+            // even before the first /usage/summary response arrives.
+            button.title = "TB"
+            FileHandle.standardError.write(Data("[tokenboard] status bar item created (image=\(button.image != nil))\n".utf8))
+        } else {
+            FileHandle.standardError.write(Data("[tokenboard] ✗ NO status bar button — system rejected status item\n".utf8))
         }
 
         popover = NSPopover()
@@ -74,9 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Show today's count (resets at local midnight) — matches the
             // popover's highlighted "Today" card so the user sees one number
             // they can reason about at a glance.
-            button.title = "  " + Formatter.compact(s.today)
+            button.title = " " + Formatter.compact(s.today)
         } else {
-            button.title = "  —"
+            button.title = "TB"
         }
     }
 
