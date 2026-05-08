@@ -10,29 +10,49 @@ const { BucketAggregator } = require('../lib/buckets.js');
 const SOURCE = 'cursor';
 
 /**
- * Cursor stores its login session in a local SQLite database. We read the
- * session token from there and call Cursor's usage CSV endpoint.
+ * Cursor stores per-request token counts on its servers, NOT locally. The
+ * Stripe membership type and access token live in macOS Keychain
+ * (`Cursor Safe Storage`) — encrypted, can't be read without prompting.
  *
- * This parser is best-effort: if we can't authenticate (paid account
- * required) or the schema changes, we silently skip.
+ * What IS readable locally (from the global state.vscdb):
+ *   - `cursorDiskKV.composerData:<uuid>` — one row per chat session, with
+ *     `createdAt`, `modelConfig.modelName`. The `usageData` field is empty
+ *     on the free tier.
+ *   - `ItemTable.aiCodeTrackingLines` — JSON array of every AI-generated
+ *     line of code, each tagged with the `composerId` that produced it.
+ *     Capped at ~10,000 entries (FIFO eviction).
+ *
+ * Strategy: count lines per composer, multiply by a heuristic tokens-per-line
+ * to estimate output tokens, and assign a small input-token estimate per
+ * session. Bucket by the composer's `createdAt`. Mark the model with an
+ * `:est` suffix so the dashboard shows clearly that these are estimates.
+ *
+ * If the user upgrades to Cursor Pro and we ever wire up the dashboard.cursor.com
+ * API, this parser is the place to swap to exact counts.
  */
 
-function authDbCandidates() {
+const STATE_DB_CANDIDATES = () => {
   const home = os.homedir();
   return [
     path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
     path.join(home, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
   ];
-}
+};
+
+// Per-line heuristic. Real average for code is ~5–10 tokens/line of source,
+// plus output overhead. We use 25 as a conservative-but-not-tiny number.
+const TOKENS_PER_LINE = 25;
+const INPUT_TOKENS_PER_LINE = 5;
 
 async function detect() {
-  return authDbCandidates().some((p) => {
+  for (const p of STATE_DB_CANDIDATES()) {
     try {
-      return fs.statSync(p).isFile();
+      if (fs.statSync(p).isFile()) return true;
     } catch {
-      return false;
+      /* continue */
     }
-  });
+  }
+  return false;
 }
 
 let Database;
@@ -47,67 +67,151 @@ function loadSqlite() {
   return Database;
 }
 
-function readCursorAuth() {
-  const sqlite = loadSqlite();
-  if (!sqlite) return null;
-  for (const file of authDbCandidates()) {
+function findStateDb() {
+  for (const p of STATE_DB_CANDIDATES()) {
     try {
-      if (!fs.statSync(file).isFile()) continue;
+      if (fs.statSync(p).isFile()) return p;
     } catch {
-      continue;
-    }
-    const db = new sqlite(file, { readonly: true });
-    try {
-      const row = db.prepare("select value from ItemTable where key = 'cursorAuth/accessToken'").get();
-      if (row && typeof row.value === 'string') return JSON.parse(row.value);
-    } catch {
-      /* schema drift */
-    } finally {
-      db.close();
+      /* continue */
     }
   }
   return null;
 }
 
 async function parse() {
-  const auth = readCursorAuth();
-  if (!auth) return [];
+  const sqlite = loadSqlite();
+  if (!sqlite) {
+    if (process.env.TOKENBOARD_DEBUG) {
+      process.stderr.write('[cursor] better-sqlite3 not installed; skipping\n');
+    }
+    return [];
+  }
+  const dbPath = findStateDb();
+  if (!dbPath) return [];
 
-  // Cursor's per-day usage CSV endpoint requires a paid plan. The CLI
-  // makes one HTTP request and parses the result. Errors are swallowed.
+  const dbMtime = (() => {
+    try { return fs.statSync(dbPath).mtime.getTime(); } catch { return Date.now(); }
+  })();
+
   const state = cursors.get(SOURCE);
-  const lastDate = state.lastDate || '1970-01-01';
+  state.seenComposers = state.seenComposers || {};
+  state.seenOrphanLineCount = state.seenOrphanLineCount || 0;
 
-  let res;
+  const db = new sqlite(dbPath, { readonly: true });
+  let composers = [];
+  let trackingLinesRaw = '[]';
+  let trackingStart = null;
   try {
-    res = await fetch('https://www.cursor.com/api/usage', {
-      headers: { Authorization: `Bearer ${auth}`, Accept: 'application/json' },
-    });
-    if (!res.ok) return [];
-  } catch {
+    composers = db
+      .prepare(`select key, value from cursorDiskKV where key like 'composerData:%'`)
+      .all();
+    const linesRow = db
+      .prepare(`select value from ItemTable where key = 'aiCodeTrackingLines'`)
+      .get();
+    if (linesRow && typeof linesRow.value === 'string') trackingLinesRaw = linesRow.value;
+    const startRow = db
+      .prepare(`select value from ItemTable where key = 'aiCodeTrackingStartTime'`)
+      .get();
+    if (startRow && typeof startRow.value === 'string') {
+      try {
+        trackingStart = JSON.parse(startRow.value).timestamp;
+      } catch { /* ignore */ }
+    }
+  } catch (err) {
+    if (process.env.TOKENBOARD_DEBUG) {
+      process.stderr.write(`[cursor] read failed: ${err.message}\n`);
+    }
+    db.close();
     return [];
   }
-  let json;
+  db.close();
+
+  // Map composerId → number of AI-generated lines.
+  const linesPerComposer = new Map();
   try {
-    json = await res.json();
+    const arr = JSON.parse(trackingLinesRaw);
+    if (Array.isArray(arr)) {
+      for (const entry of arr) {
+        const cid = entry?.metadata?.composerId;
+        if (typeof cid === 'string') {
+          linesPerComposer.set(cid, (linesPerComposer.get(cid) ?? 0) + 1);
+        }
+      }
+    }
   } catch {
-    return [];
+    /* malformed — treat as no line data */
   }
 
+  // Index composerData by id so we can detect orphans (line-tracked ids not in composerData).
+  const composerById = new Map();
+  for (const row of composers) {
+    try {
+      const cd = JSON.parse(row.value);
+      if (cd?.composerId) composerById.set(cd.composerId, cd);
+    } catch { /* ignore */ }
+  }
+
+  if (process.env.TOKENBOARD_DEBUG) {
+    const orphanCount = [...linesPerComposer.keys()].filter((id) => !composerById.has(id)).length;
+    process.stderr.write(
+      `[cursor] composerData=${composers.length} lines_keyed_to_composers=${linesPerComposer.size} orphans=${orphanCount}\n`,
+    );
+  }
+
+  const seen = new Set(Object.keys(state.seenComposers));
   const agg = new BucketAggregator();
-  let newest = lastDate;
-  for (const row of Array.isArray(json?.usage) ? json.usage : []) {
-    if (!row?.date) continue;
-    if (row.date < lastDate) continue;
-    if (row.date > newest) newest = row.date;
-    const ts = `${row.date}T12:00:00Z`;
-    agg.add(SOURCE, row.model || 'cursor', ts, {
-      input_tokens: row.input_tokens || 0,
-      output_tokens: row.output_tokens || 0,
+
+  // Pass 1: composers with full metadata (createdAt + model). Best signal.
+  for (const [composerId, cd] of composerById) {
+    if (seen.has(composerId)) continue;
+    const ts = cd?.createdAt;
+    if (typeof ts !== 'number' || !Number.isFinite(ts)) continue;
+    seen.add(composerId);
+
+    const lines = linesPerComposer.get(composerId) ?? 0;
+    if (lines === 0) continue;
+
+    const model = (cd?.modelConfig?.modelName || 'cursor-unknown').toString();
+    agg.add(SOURCE, `${model}:est`, new Date(ts).toISOString(), {
+      input_tokens: lines * INPUT_TOKENS_PER_LINE,
+      output_tokens: lines * TOKENS_PER_LINE,
     });
   }
-  state.lastDate = newest;
+
+  // Pass 2: orphan composers — their lines exist in the tracking buffer but
+  // their composerData has been evicted. We don't know the per-composer
+  // timestamp, but the lines did happen since `aiCodeTrackingStartTime`.
+  // Best-effort: bucket all orphan lines as a single estimate at the DB's
+  // mtime (rounded to half-hour), with model `cursor-historical`. The user
+  // sees their historical Cursor activity, clearly labelled estimate.
+  let orphanLines = 0;
+  for (const [cid, lines] of linesPerComposer) {
+    if (composerById.has(cid)) continue;
+    if (seen.has(cid)) continue;
+    seen.add(cid);
+    orphanLines += lines;
+  }
+  // Subtract previously-attributed orphan lines so re-runs don't double-count.
+  const newOrphanLines = Math.max(0, orphanLines - state.seenOrphanLineCount);
+  if (newOrphanLines > 0) {
+    agg.add(SOURCE, 'cursor-historical:est', new Date(dbMtime).toISOString(), {
+      input_tokens: newOrphanLines * INPUT_TOKENS_PER_LINE,
+      output_tokens: newOrphanLines * TOKENS_PER_LINE,
+    });
+    state.seenOrphanLineCount = orphanLines;
+    if (process.env.TOKENBOARD_DEBUG) {
+      process.stderr.write(`[cursor] emitted ${newOrphanLines} orphan lines @ ${new Date(dbMtime).toISOString()}\n`);
+    }
+  }
+
+  void trackingStart; // reserved for future use
+
+  // Cap seenComposers at 5000 most-recent UUIDs.
+  const idArr = Array.from(seen);
+  state.seenComposers = {};
+  for (const id of idArr.slice(-5000)) state.seenComposers[id] = 1;
   cursors.set(SOURCE, state);
+
   return agg.values();
 }
 
