@@ -1,0 +1,61 @@
+name: tokenboard
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-tokenboard}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-tokenboard}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-tokenboard} -d ${DB_NAME:-tokenboard}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: ghcr.io/${ORG:-tokenboard}/tokenboard-api:${VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${DB_USER:-tokenboard}:${DB_PASSWORD}@db:5432/${DB_NAME:-tokenboard}
+      JWT_SECRET: ${JWT_SECRET}
+      PUBLIC_URL: ${PUBLIC_URL}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+      ALLOW_PASSWORD_SIGNUP: ${ALLOW_PASSWORD_SIGNUP:-true}
+      SLOW_QUERY_MS: ${SLOW_QUERY_MS:-2000}
+      USAGE_MAX_DAYS: ${USAGE_MAX_DAYS:-800}
+      LEADERBOARD_REFRESH_DISABLED: ${LEADERBOARD_REFRESH_DISABLED:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  dashboard:
+    image: ghcr.io/${ORG:-tokenboard}/tokenboard-dashboard:${VERSION:-latest}
+    restart: unless-stopped
+
+  proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ingest.njs:/etc/nginx/ingest.njs:ro
+      - ./certs:/etc/nginx/certs:ro
+    environment:
+      INGEST_BEARER_HASH: ${INGEST_BEARER_HASH:-true}
+      TLS_DISABLED: ${TLS_DISABLED:-false}
+    depends_on: [api, dashboard]
+
+volumes:
+  pgdata:

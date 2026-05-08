@@ -1,0 +1,8 @@
+node_modules
+dist
+build
+coverage
+*.lock
+*.log
+infra/certs
+infra/backups
