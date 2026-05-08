@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/bundle-widget.cjs",
     "dev": "vite",
+    "prebuild": "node scripts/bundle-widget.cjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "bundle:widget": "node scripts/bundle-widget.cjs"
   },
   "dependencies": {
     "@tokenboard/shared": "*",

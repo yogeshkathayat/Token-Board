@@ -8,6 +8,7 @@ import { LeaderboardPage } from './pages/LeaderboardPage';
 import { LimitsPage } from './pages/LimitsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { DevicesPage } from './pages/DevicesPage';
+import { WidgetsPage } from './pages/WidgetsPage';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
 
 export function App() {
@@ -31,6 +32,7 @@ export function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/leaderboard" element={<LeaderboardPage />} />
         <Route path="/limits" element={<LimitsPage />} />
+        <Route path="/widgets" element={<WidgetsPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/settings/devices" element={<DevicesPage />} />
       </Route>
