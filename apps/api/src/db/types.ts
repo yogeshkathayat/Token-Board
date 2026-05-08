@@ -131,6 +131,17 @@ export interface AuditEventsTable {
   created_at: Generated<Timestamp>;
 }
 
+export interface PersonalTokensTable {
+  id: ColumnType<string, string | undefined, never>;
+  user_id: string;
+  token_hash: string;
+  name: string | null;
+  created_at: Generated<Timestamp>;
+  last_used_at: Timestamp | null;
+  expires_at: Generated<Timestamp>;
+  revoked_at: Timestamp | null;
+}
+
 export interface DB {
   tb_users: UsersTable;
   tb_oidc_links: OidcLinksTable;
@@ -143,4 +154,5 @@ export interface DB {
   tb_sync_pings: SyncPingsTable;
   tb_link_codes: LinkCodesTable;
   tb_audit_events: AuditEventsTable;
+  tb_personal_tokens: PersonalTokensTable;
 }

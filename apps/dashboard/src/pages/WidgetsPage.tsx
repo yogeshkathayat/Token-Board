@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { useApi } from '../hooks/useApi';
+import { useApi, useApiClient } from '../hooks/useApi';
 import { formatTokensCompact, formatTokens } from '../lib/format';
 
 interface SummaryResponse {
@@ -28,13 +28,41 @@ export function WidgetsPage() {
   });
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const installCommand = `curl -fsSL ${origin}/install-widget.sh | sh -s -- ${origin}`;
 
   const [copied, setCopied] = useState(false);
+  const [minting, setMinting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [installCommand, setInstallCommand] = useState(
+    `curl -fsSL ${origin}/install-widget.sh | sh -s -- ${origin}`,
+  );
+  const [hasPat, setHasPat] = useState(false);
 
-  async function copyAndOpenTerminal() {
+  // Mint a PAT lazily on first click — gives the user a single command that
+  // pre-fills the bar app's auth, so they never have to touch Settings.
+  const apiClient = useApiClient();
+
+  async function ensurePatThenCopy() {
+    setError(null);
+    let cmd = installCommand;
+    if (!hasPat) {
+      setMinting(true);
+      try {
+        const r = await apiClient.request<{ token: string }>('/auth/personal-token', {
+          method: 'POST',
+          body: { name: 'Menu bar widget' },
+        });
+        cmd = `curl -fsSL ${origin}/install-widget.sh | sh -s -- ${origin} ${r.token}`;
+        setInstallCommand(cmd);
+        setHasPat(true);
+      } catch (e) {
+        setError((e as Error).message ?? 'Could not mint a token');
+        setMinting(false);
+        return;
+      }
+      setMinting(false);
+    }
     try {
-      await navigator.clipboard.writeText(installCommand);
+      await navigator.clipboard.writeText(cmd);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -87,12 +115,13 @@ export function WidgetsPage() {
             </div>
 
             <button
-              onClick={copyAndOpenTerminal}
-              className="group mt-5 flex w-full items-center gap-3 rounded-xl border border-slate-300 bg-slate-900 p-4 text-left transition hover:border-brand-500 hover:shadow-md dark:border-slate-700"
+              onClick={ensurePatThenCopy}
+              disabled={minting}
+              className="group mt-5 flex w-full items-center gap-3 rounded-xl border border-slate-300 bg-slate-900 p-4 text-left transition hover:border-brand-500 hover:shadow-md disabled:opacity-70 dark:border-slate-700"
             >
               <span className="font-mono text-xs text-slate-400">$</span>
               <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-xs text-slate-100 sm:text-sm">
-                {installCommand}
+                {hasPat ? installCommand.replace(/(sh -s -- \S+\s+)(\S+)/, '$1•••••••• (token embedded)') : installCommand}
               </code>
               <span
                 className={
@@ -102,14 +131,18 @@ export function WidgetsPage() {
                     : 'bg-white text-slate-900 group-hover:bg-brand-500 group-hover:text-white')
                 }
               >
-                {copied ? '✓ Copied!' : 'Copy'}
+                {minting ? 'Minting…' : copied ? '✓ Copied!' : 'Copy'}
               </span>
             </button>
+
+            {error && (
+              <div className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</div>
+            )}
 
             <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs text-slate-500 dark:text-slate-400">
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                Builds with <code className="rounded bg-slate-100 px-1 py-0.5 font-mono dark:bg-slate-800">swiftc</code> — no Xcode app needed
+                Mints a 1-year token tied to your account — no manual paste
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -117,7 +150,7 @@ export function WidgetsPage() {
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                Takes ~10 seconds
+                Takes ~10 seconds end-to-end
               </span>
             </div>
 

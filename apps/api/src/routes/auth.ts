@@ -167,6 +167,54 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return { user };
   });
 
+  // ---------- Personal access tokens (long-lived auth for the menu bar etc.) ----------
+  app.post('/personal-token', { preHandler: app.requireUser }, async (req, reply) => {
+    const body = (req.body as { name?: string }) ?? {};
+    const { token, hash } = generateOpaqueToken();
+    const inserted = await app.db
+      .insertInto('tb_personal_tokens')
+      .values({
+        user_id: req.authUser!.sub,
+        token_hash: hash,
+        name: body.name ? body.name.toString().slice(0, 100) : 'Untitled',
+      })
+      .returning(['id', 'name', 'created_at', 'expires_at'])
+      .executeTakeFirstOrThrow();
+    // Token is shown once; subsequent reads return only id + metadata.
+    return reply.send({
+      id: inserted.id,
+      name: inserted.name,
+      created_at: inserted.created_at,
+      expires_at: inserted.expires_at,
+      token,
+    });
+  });
+
+  app.get('/personal-tokens', { preHandler: app.requireUser }, async (req) => {
+    const tokens = await app.db
+      .selectFrom('tb_personal_tokens')
+      .select(['id', 'name', 'created_at', 'last_used_at', 'expires_at'])
+      .where('user_id', '=', req.authUser!.sub)
+      .where('revoked_at', 'is', null)
+      .orderBy('created_at', 'desc')
+      .execute();
+    return { tokens };
+  });
+
+  app.delete('/personal-tokens/:id', { preHandler: app.requireUser }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const updated = await app.db
+      .updateTable('tb_personal_tokens')
+      .set({ revoked_at: new Date() })
+      .where('id', '=', id)
+      .where('user_id', '=', req.authUser!.sub)
+      .where('revoked_at', 'is', null)
+      .returning(['id'])
+      .executeTakeFirst();
+    if (!updated) return reply.code(404).send({ error: 'NotFound' });
+    return { ok: true };
+  });
+
   // ---------- Device tokens (for the CLI) ----------
   app.post('/device-token', { preHandler: app.requireUser }, async (req, reply) => {
     const body = (req.body as { device_name?: string; platform?: string }) ?? {};
