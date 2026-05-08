@@ -28,19 +28,25 @@ A native macOS menu bar widget shows today's count at a glance, with a popover f
 
 The signed-in dashboard with stat cards (Today / 7-Day / 30-Day / Total), per-tool limits, GitHub-style activity heatmap, trend chart with period selector, and top-models list.
 
-![Dashboard](docs/screenshots/dashboard.png)
+![Dashboard](docs/screenshots/dashboard.svg)
+
+> _Placeholder — real screenshot coming soon._
 
 ### Leaderboard
 
 Per-source breakdown across all 8 supported tools, with rank medals for top 3 and gradient avatars for each engineer. Privacy toggle in Settings makes you anonymous.
 
-![Leaderboard](docs/screenshots/leaderboard.png)
+![Leaderboard](docs/screenshots/leaderboard.svg)
+
+> _Placeholder — real screenshot coming soon._
 
 ### Menu bar widget (macOS)
 
 Native Swift app — `📊 157.3M` in the menu bar (today's count, resets at local midnight). Click for a popover with the same stat cards as the dashboard.
 
-![Menu bar](docs/screenshots/menubar-full.png)
+![Menu bar](docs/screenshots/menubar-full.svg)
+
+> _Placeholder — real screenshot coming soon._
 
 ## Features
 
