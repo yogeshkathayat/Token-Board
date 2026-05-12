@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/screenshots/logo.svg" width="80" height="80" alt="Token Board logo" />
+<img src="docs/screenshots/logo.png" width="80" height="80" alt="Token Board logo" />
 
 # Token Board
 
@@ -20,7 +20,7 @@ Each engineer installs a tiny Node.js CLI on their laptop. The CLI parses local 
 
 A native macOS menu bar widget shows today's count at a glance, with a popover for stat cards and top models — like having `htop` for tokens pinned to your menu bar.
 
-**Privacy by design**: only token *counts* and *timestamps* are uploaded — never prompts, responses, or file contents.
+**Privacy by design**: only token _counts_ and _timestamps_ are uploaded — never prompts, responses, or file contents.
 
 ## Screenshots
 
@@ -28,7 +28,7 @@ A native macOS menu bar widget shows today's count at a glance, with a popover f
 
 The signed-in dashboard with stat cards (Today / 7-Day / 30-Day / Total), per-tool limits, GitHub-style activity heatmap, trend chart with period selector, and top-models list.
 
-![Dashboard](docs/screenshots/dashboard.svg)
+![Dashboard](docs/screenshots/dashboard.png)
 
 > _Placeholder — real screenshot coming soon._
 
@@ -36,7 +36,7 @@ The signed-in dashboard with stat cards (Today / 7-Day / 30-Day / Total), per-to
 
 Per-source breakdown across all 8 supported tools, with rank medals for top 3 and gradient avatars for each engineer. Privacy toggle in Settings makes you anonymous.
 
-![Leaderboard](docs/screenshots/leaderboard.svg)
+![Leaderboard](docs/screenshots/leaderboard.png)
 
 > _Placeholder — real screenshot coming soon._
 
@@ -44,7 +44,7 @@ Per-source breakdown across all 8 supported tools, with rank medals for top 3 an
 
 Native Swift app — `📊 157.3M` in the menu bar (today's count, resets at local midnight). Click for a popover with the same stat cards as the dashboard.
 
-![Menu bar](docs/screenshots/menubar-full.svg)
+![Menu bar](docs/screenshots/menubar-full.png)
 
 > _Placeholder — real screenshot coming soon._
 
@@ -61,16 +61,16 @@ Native Swift app — `📊 157.3M` in the menu bar (today's count, resets at loc
 
 ## Supported AI tools
 
-| Tool | Mechanism | Status |
-|---|---|---|
-| **Claude Code** | `~/.claude/projects/*.jsonl` parser | ✅ exact token counts |
-| **Kiro** | `~/Library/Application Support/kiro-cli/data.sqlite3` (`conversations_v2`) | ⚠️ estimated from prompt/response char length (Kiro doesn't expose token counts locally) |
-| **Codex CLI** | `~/.codex/sessions/**/rollout-*.jsonl` parser | ✅ exact (when used) |
-| **Gemini CLI** | `~/.gemini/tmp/**/session-*.json` parser | ✅ exact (when used) |
-| **OpenCode** | `~/.config/opencode/opencode.db` SQLite | ✅ exact (when used) |
-| **Cursor** | `state.vscdb` auth + Cursor's usage API | ⚠️ requires paid plan + keychain workaround |
-| **GitHub Copilot** | `$COPILOT_OTEL_FILE_EXPORTER_PATH` JSONL | ✅ when env var is set |
-| **OpenRouter** | API key + paginated `/api/v1/generation` poll | ✅ exact, runs every sync |
+| Tool               | Mechanism                                                                  | Status                                                                                   |
+| ------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **Claude Code**    | `~/.claude/projects/*.jsonl` parser                                        | ✅ exact token counts                                                                    |
+| **Kiro**           | `~/Library/Application Support/kiro-cli/data.sqlite3` (`conversations_v2`) | ⚠️ estimated from prompt/response char length (Kiro doesn't expose token counts locally) |
+| **Codex CLI**      | `~/.codex/sessions/**/rollout-*.jsonl` parser                              | ✅ exact (when used)                                                                     |
+| **Gemini CLI**     | `~/.gemini/tmp/**/session-*.json` parser                                   | ✅ exact (when used)                                                                     |
+| **OpenCode**       | `~/.config/opencode/opencode.db` SQLite                                    | ✅ exact (when used)                                                                     |
+| **Cursor**         | `state.vscdb` auth + Cursor's usage API                                    | ⚠️ requires paid plan + keychain workaround                                              |
+| **GitHub Copilot** | `$COPILOT_OTEL_FILE_EXPORTER_PATH` JSONL                                   | ✅ when env var is set                                                                   |
+| **OpenRouter**     | API key + paginated `/api/v1/generation` poll                              | ✅ exact, runs every sync                                                                |
 
 ## Architecture
 
@@ -227,20 +227,20 @@ If `swift build` fails with "this SDK is not supported by the compiler" or "rede
 
 The backend exposes a small REST surface under `/api/v1/`. Highlights:
 
-| Endpoint | Auth | Purpose |
-|---|---|---|
-| `POST /auth/login` | public | email + password → access JWT + refresh cookie |
-| `GET /auth/oidc/start` | public | OIDC redirect (Google / Okta / etc.) |
-| `POST /auth/link-code-init` | user JWT | generate a 6-char code for CLI handshake |
-| `POST /auth/link-code-exchange` | public | CLI swaps code → device token |
-| `POST /ingest` | device token | upload half-hour buckets (idempotent upsert) |
-| `GET /usage/summary` | user JWT | totals over a date range |
-| `GET /usage/daily` | user JWT | daily breakdown |
-| `GET /usage/heatmap` | user JWT | 52-week activity grid |
-| `GET /usage/model-breakdown` | user JWT | per-source × per-model |
-| `GET /leaderboard` | optional auth | ranked users with per-source columns |
-| `GET/POST /public-visibility` | user JWT | privacy opt-in toggle |
-| `GET /healthz` | public | health check |
+| Endpoint                        | Auth          | Purpose                                        |
+| ------------------------------- | ------------- | ---------------------------------------------- |
+| `POST /auth/login`              | public        | email + password → access JWT + refresh cookie |
+| `GET /auth/oidc/start`          | public        | OIDC redirect (Google / Okta / etc.)           |
+| `POST /auth/link-code-init`     | user JWT      | generate a 6-char code for CLI handshake       |
+| `POST /auth/link-code-exchange` | public        | CLI swaps code → device token                  |
+| `POST /ingest`                  | device token  | upload half-hour buckets (idempotent upsert)   |
+| `GET /usage/summary`            | user JWT      | totals over a date range                       |
+| `GET /usage/daily`              | user JWT      | daily breakdown                                |
+| `GET /usage/heatmap`            | user JWT      | 52-week activity grid                          |
+| `GET /usage/model-breakdown`    | user JWT      | per-source × per-model                         |
+| `GET /leaderboard`              | optional auth | ranked users with per-source columns           |
+| `GET/POST /public-visibility`   | user JWT      | privacy opt-in toggle                          |
+| `GET /healthz`                  | public        | health check                                   |
 
 Full reference: [`docs/API.md`](docs/API.md).
 
@@ -284,6 +284,7 @@ npm test                   # runs all workspace tests
 ```
 
 Conventions:
+
 - Prettier + 2-space indent, semicolons + single quotes (TS), CommonJS in CLI
 - Strict TypeScript everywhere it's used
 - Default to no comments — only add WHY a line exists, never WHAT
