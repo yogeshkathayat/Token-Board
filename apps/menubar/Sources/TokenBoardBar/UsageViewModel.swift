@@ -64,6 +64,10 @@ final class UsageViewModel: ObservableObject {
         lastError = nil
         let client = APIClient(baseURL: url, userToken: token)
         Task { [weak self] in
+            // Run the CLI sync first so the API has up-to-the-second data.
+            // Best-effort: if `tokenboard` isn't on PATH, fall through to a
+            // plain API poll (matches the old behavior).
+            await Self.runCLISync()
             do {
                 // Use the user's local timezone so "today" means midnight-to-
                 // midnight in their wallclock, not UTC. The API uses the
@@ -123,6 +127,41 @@ final class UsageViewModel: ObservableObject {
                     self?.lastError = msg
                     self?.loading = false
                 }
+            }
+        }
+    }
+
+    /// Spawn `tokenboard sync --force` and wait up to ~12s for it to finish.
+    /// Best-effort — failures (missing binary, throttle, network) are logged
+    /// and ignored so the API poll always runs.
+    private static func runCLISync() async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let p = Process()
+                // Use a login shell so $PATH includes /usr/local/bin (npm) and
+                // ~/.nvm/... where users typically install `tokenboard`.
+                p.launchPath = "/bin/zsh"
+                p.arguments = ["-lc", "tokenboard sync --force >/dev/null 2>&1"]
+                let started = Date()
+                do {
+                    try p.run()
+                } catch {
+                    FileHandle.standardError.write(Data("[tokenboard] sync spawn failed: \(error.localizedDescription)\n".utf8))
+                    cont.resume()
+                    return
+                }
+                // Hard-timeout after 12s so the UI doesn't hang on a stuck sync.
+                let deadline = DispatchTime.now() + .seconds(12)
+                DispatchQueue.global().asyncAfter(deadline: deadline) {
+                    if p.isRunning {
+                        FileHandle.standardError.write(Data("[tokenboard] sync timed out — terminating\n".utf8))
+                        p.terminate()
+                    }
+                }
+                p.waitUntilExit()
+                let dur = Int(Date().timeIntervalSince(started) * 1000)
+                FileHandle.standardError.write(Data("[tokenboard] sync exited code=\(p.terminationStatus) in \(dur)ms\n".utf8))
+                cont.resume()
             }
         }
     }

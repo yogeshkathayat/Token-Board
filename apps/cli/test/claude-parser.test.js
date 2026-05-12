@@ -138,6 +138,54 @@ test('claude parser skips all-zero usage events', async () => {
   assert.equal(buckets[0].output_tokens, 3);
 });
 
+test('claude parser emits cumulative bucket totals across runs (not just deltas)', async () => {
+  // The API upserts buckets with REPLACE semantics. If the parser emits only
+  // the per-run delta on an incremental sync, the prior full-hour total gets
+  // clobbered. The second run must therefore emit the cumulative bucket value
+  // (1st event + 2nd event) for the touched hour, not just the 2nd event.
+  reset();
+  writeProject('p5', 'history.jsonl', [
+    {
+      uuid: 'e1',
+      requestId: 'req_1',
+      timestamp: '2026-05-12T17:05:00Z',
+      message: {
+        id: 'msg_1',
+        role: 'assistant',
+        model: 'claude-opus-4-7',
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100 },
+      },
+    },
+  ]);
+  const claude = require('../src/parsers/claude.js');
+  const first = await claude.parse();
+  assert.equal(first.length, 1);
+  assert.equal(first[0].total_tokens, 115);
+
+  // Append a second event in the SAME hour and re-parse.
+  fs.appendFileSync(
+    path.join(TEST_HOME, '.claude', 'projects', 'p5', 'history.jsonl'),
+    JSON.stringify({
+      uuid: 'e2',
+      requestId: 'req_2',
+      timestamp: '2026-05-12T17:10:00Z',
+      message: {
+        id: 'msg_2',
+        role: 'assistant',
+        model: 'claude-opus-4-7',
+        usage: { input_tokens: 20, output_tokens: 8, cache_read_input_tokens: 200 },
+      },
+    }) + '\n',
+  );
+  const second = await claude.parse();
+  assert.equal(second.length, 1, 'one touched bucket');
+  // Cumulative: 10+20 input, 5+8 output, 100+200 cached.
+  assert.equal(second[0].input_tokens, 30);
+  assert.equal(second[0].output_tokens, 13);
+  assert.equal(second[0].cached_input_tokens, 300);
+  assert.equal(second[0].total_tokens, 343);
+});
+
 test('claude parser is incremental across runs', async () => {
   reset();
   writeProject('p2', 'history.jsonl', [
