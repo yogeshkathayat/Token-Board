@@ -68,6 +68,76 @@ test('claude parser aggregates token usage from JSONL events', async () => {
   assert.equal(b.conversation_count, 1);
 });
 
+test('claude parser dedupes the same billed message across files', async () => {
+  // The same assistant message (same message.id + requestId) is logged into
+  // two files — once in the main session, once in a /subagents/ jsonl — with
+  // different per-event uuid values. It must be counted once, not twice.
+  reset();
+  const event = (uuid) => ({
+    uuid,
+    parentUuid: 'p',
+    requestId: 'req_abc123',
+    timestamp: '2026-05-12T11:00:00Z',
+    isSidechain: false,
+    message: {
+      id: 'msg_01ZSAME',
+      role: 'assistant',
+      model: 'claude-opus-4-7',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_read_input_tokens: 200,
+        cache_creation_input_tokens: 10,
+      },
+    },
+  });
+  writeProject('p3', 'main.jsonl', [event('uuid-in-main-file')]);
+  writeProject('p3/subagents', 'agent.jsonl', [event('uuid-in-subagent-file')]);
+
+  const claude = require('../src/parsers/claude.js');
+  const buckets = await claude.parse();
+  assert.equal(buckets.length, 1);
+  const b = buckets[0];
+  assert.equal(b.input_tokens, 100, 'input_tokens counted once');
+  assert.equal(b.output_tokens, 50, 'output_tokens counted once');
+  assert.equal(b.cached_input_tokens, 200, 'cache_read counted once');
+  assert.equal(b.cache_creation_input_tokens, 10, 'cache_creation counted once');
+  assert.equal(b.total_tokens, 360);
+});
+
+test('claude parser skips all-zero usage events', async () => {
+  reset();
+  writeProject('p4', 'history.jsonl', [
+    {
+      uuid: 'zero',
+      requestId: 'req_zero',
+      timestamp: '2026-05-12T12:00:00Z',
+      message: {
+        id: 'msg_zero',
+        role: 'assistant',
+        model: 'claude-opus-4-7',
+        usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0 },
+      },
+    },
+    {
+      uuid: 'real',
+      requestId: 'req_real',
+      timestamp: '2026-05-12T12:05:00Z',
+      message: {
+        id: 'msg_real',
+        role: 'assistant',
+        model: 'claude-opus-4-7',
+        usage: { input_tokens: 5, output_tokens: 3 },
+      },
+    },
+  ]);
+  const claude = require('../src/parsers/claude.js');
+  const buckets = await claude.parse();
+  assert.equal(buckets.length, 1);
+  assert.equal(buckets[0].input_tokens, 5);
+  assert.equal(buckets[0].output_tokens, 3);
+});
+
 test('claude parser is incremental across runs', async () => {
   reset();
   writeProject('p2', 'history.jsonl', [

@@ -11,9 +11,14 @@ const SOURCE = 'claude';
 
 /**
  * Claude Code stores per-project history under ~/.claude/projects/.../*.jsonl.
- * Each line is a JSON event; events with `usage` carry token counts. We
- * dedupe by event uuid across files (Claude's history can be split across
- * multiple files for the same conversation).
+ * Each line is a JSON event; events with `usage` carry token counts.
+ *
+ * Dedup key: `message.id + ":" + requestId`. This identifies a single billed
+ * Anthropic API call. The same call is logged into multiple jsonl files
+ * (sidechain, /subagents/, resumed sessions) with the *same* message.id and
+ * requestId but different per-event `uuid` values, so deduping by `uuid`
+ * undercounts duplicates and inflates totals. We fall back to `uuid` only
+ * when those fields are absent (legacy logs).
  */
 
 function projectsDir() {
@@ -79,15 +84,17 @@ function pickUsage(event) {
   };
 }
 
+const SEEN_HASH_CAP = 100_000;
+
 async function parse() {
   const dir = projectsDir();
   const state = cursors.get(SOURCE);
   state.files = state.files || {};
-  state.seenIds = state.seenIds || {}; // recent uuid -> 1 (capped)
+  state.seenHashes = state.seenHashes || {}; // "<msg.id>:<requestId>" -> 1
 
   const agg = new BucketAggregator();
   let convCount = 0;
-  const seenIds = new Set(Object.keys(state.seenIds));
+  const seenHashes = new Set(Object.keys(state.seenHashes));
 
   for (const file of walkJsonl(dir)) {
     let stat;
@@ -125,9 +132,6 @@ async function parse() {
         } catch {
           continue;
         }
-        const uuid = event?.uuid || event?.id || event?.message?.id;
-        if (uuid && seenIds.has(uuid)) continue;
-        if (uuid) seenIds.add(uuid);
 
         // Count user-typed turns regardless of whether the event carries
         // usage — user messages typically don't (the assistant's reply does).
@@ -138,6 +142,32 @@ async function parse() {
         const ts = pickTimestamp(event);
         const usage = pickUsage(event);
         if (!ts || !usage) continue;
+
+        // Skip all-zero usage events (Claude logs them on user/tool_result turns).
+        if (
+          usage.input_tokens === 0 &&
+          usage.cached_input_tokens === 0 &&
+          usage.cache_creation_input_tokens === 0 &&
+          usage.output_tokens === 0 &&
+          usage.reasoning_output_tokens === 0
+        ) {
+          continue;
+        }
+
+        // The billable identity of an assistant message: message.id + requestId.
+        // Claude logs the same call into multiple jsonl files (sidechain,
+        // /subagents/, resumed sessions) — same msg.id + requestId, different
+        // per-event uuid. Falling back to uuid keeps legacy events working.
+        const msgId = event?.message?.id;
+        const reqId = event?.requestId;
+        const hash =
+          msgId && reqId
+            ? `${msgId}:${reqId}`
+            : event?.uuid || event?.id || event?.message?.id || null;
+        if (hash) {
+          if (seenHashes.has(hash)) continue;
+          seenHashes.add(hash);
+        }
 
         agg.add(SOURCE, pickModel(event), ts, usage);
       }
@@ -152,10 +182,14 @@ async function parse() {
     }
   }
 
-  // Cap seenIds to ~5000 most recent to bound state size.
-  const idArr = Array.from(seenIds);
-  state.seenIds = {};
-  for (const id of idArr.slice(-5000)) state.seenIds[id] = 1;
+  // Persist dedup hashes across runs. Cap to bound state size; new entries
+  // are appended to the end of seenHashes during this run, so slicing the
+  // tail keeps the most-recently-observed messages.
+  const hashArr = Array.from(seenHashes);
+  state.seenHashes = {};
+  for (const h of hashArr.slice(-SEEN_HASH_CAP)) state.seenHashes[h] = 1;
+  // Clear the legacy field so we don't carry a stale 5k-entry uuid set.
+  if (state.seenIds) delete state.seenIds;
   cursors.set(SOURCE, state);
 
   const out = agg.values();
