@@ -30,23 +30,17 @@ The signed-in dashboard with stat cards (Today / 7-Day / 30-Day / Total), per-to
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-> _Placeholder — real screenshot coming soon._
-
 ### Leaderboard
 
 Per-source breakdown across all 8 supported tools, with rank medals for top 3 and gradient avatars for each engineer. Privacy toggle in Settings makes you anonymous.
 
 ![Leaderboard](docs/screenshots/leaderboard.png)
 
-> _Placeholder — real screenshot coming soon._
-
 ### Menu bar widget (macOS)
 
 Native Swift app — `📊 157.3M` in the menu bar (today's count, resets at local midnight). Click for a popover with the same stat cards as the dashboard.
 
 ![Menu bar](docs/screenshots/menubar-full.png)
-
-> _Placeholder — real screenshot coming soon._
 
 ## Features
 
