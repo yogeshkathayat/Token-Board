@@ -18,6 +18,13 @@ services:
 
   api:
     image: ghcr.io/${ORG:-tokenboard}/tokenboard-api:${VERSION:-latest}
+    # build: lets a self-hoster `make up` straight from a clone (compose builds
+    # the image locally if it isn't already present), while CI can still build,
+    # tag, and push this same name to a registry for pull-based deploys.
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+      target: runtime
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -46,6 +53,10 @@ services:
 
   dashboard:
     image: ghcr.io/${ORG:-tokenboard}/tokenboard-dashboard:${VERSION:-latest}
+    build:
+      context: ..
+      dockerfile: apps/dashboard/Dockerfile
+      target: runtime
     restart: unless-stopped
     healthcheck:
       test: ['CMD-SHELL', 'wget -qO- http://localhost:80/ >/dev/null 2>&1 || exit 1']

@@ -41,6 +41,7 @@ async function handle(r) {
     r.headersOut['Content-Type'] = 'application/json';
     r.return(resp.status, await resp.text());
   } catch (e) {
+    r.error('ingest proxy fetch failed: ' + (e.message || e));
     r.return(502, JSON.stringify({ error: 'upstream_unavailable' }));
   }
 }
