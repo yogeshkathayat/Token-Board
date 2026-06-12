@@ -10,7 +10,7 @@ interface Sub {
 }
 
 export function LimitsPage() {
-  const { data, loading } = useApi<{ subscriptions: Sub[] }>('/usage/limits');
+  const { data, loading, error, refresh } = useApi<{ subscriptions: Sub[] }>('/usage/limits');
 
   return (
     <div className="space-y-6">
@@ -23,7 +23,20 @@ export function LimitsPage() {
 
       {loading && <div className="text-sm text-slate-500">Loading…</div>}
 
-      {!loading && data?.subscriptions.length === 0 && (
+      {!loading && error && (
+        <div className="card p-6 text-sm text-red-600 dark:text-red-400">
+          <p>Couldn’t load usage limits: {error.message}</p>
+          <button
+            type="button"
+            onClick={refresh}
+            className="mt-3 rounded-md border border-current px-3 py-1 text-xs font-medium"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && data?.subscriptions.length === 0 && (
         <div className="card p-6 text-sm text-slate-500">
           No subscription data reported yet. Limits populate once your CLI has reported back to the server.
           Try <code>tokenboard sync</code>.

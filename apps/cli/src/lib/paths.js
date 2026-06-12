@@ -35,6 +35,7 @@ function paths() {
     binDir: path.join(root, 'bin'),
     notifyScript: path.join(root, 'bin', 'notify.cjs'),
     logFile: path.join(root, 'tokenboard.log'),
+    syncLock: path.join(root, 'sync.lock'),
   };
 }
 

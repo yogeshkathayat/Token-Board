@@ -132,11 +132,19 @@ function readToml(file) {
 function installCodexHook() {
   const file = codexConfigPath();
   let body = readToml(file);
-  const cmd = `node ${paths().notifyScript}`;
-  // Replace or insert the `notify = [...]` array.
   const arrayLine = `notify = ["node", "${paths().notifyScript}"]`;
-  if (body.includes(`notify = `)) {
-    body = body.replace(/^notify\s*=\s*\[[^\]]*\]/m, arrayLine);
+  const existing = body.match(/^notify\s*=\s*\[[^\]]*\]/m);
+  if (existing) {
+    // Codex supports a single `notify` program, so we can't merge. If the user
+    // already configured their own, leave it untouched rather than clobber it.
+    if (!existing[0].includes('tokenboard')) {
+      process.stderr.write(
+        '[tokenboard] ~/.codex/config.toml already has a `notify` entry; leaving it untouched. ' +
+          `Add ["node", "${paths().notifyScript}"] yourself to enable sync on Codex events.\n`,
+      );
+      return;
+    }
+    body = body.replace(/^notify\s*=\s*\[[^\]]*\]/m, arrayLine); // idempotent refresh of our own entry
   } else {
     body = (body ? body.trimEnd() + '\n\n' : '') + arrayLine + '\n';
   }

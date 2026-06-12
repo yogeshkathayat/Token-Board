@@ -7,6 +7,7 @@ const path = require('path');
 const cursors = require('../lib/cursors.js');
 const secrets = require('../lib/secrets.js');
 const { BucketAggregator } = require('../lib/buckets.js');
+const { timeoutMs } = require('../lib/http.js');
 
 const SOURCE = 'cursor';
 
@@ -118,6 +119,9 @@ function buildCookieHeader(stored) {
 }
 
 async function fetchCursorCsv(cookie) {
+  // Bound the request — Node's global fetch has no default timeout, so a
+  // stalled connection to cursor.com would otherwise hang the whole sync.
+  const ms = timeoutMs();
   const res = await fetch(CSV_URL, {
     headers: {
       Cookie: cookie,
@@ -126,6 +130,7 @@ async function fetchCursorCsv(cookie) {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
     },
     redirect: 'follow',
+    signal: ms > 0 ? AbortSignal.timeout(ms) : undefined,
   });
   if (res.status === 401 || res.status === 403) {
     const err = new Error('Cursor session expired — re-run `tokenboard cursor login`');
@@ -251,7 +256,7 @@ async function parseFromCsv() {
     process.stderr.write(`[cursor] CSV: ${rows.length} new events since ${new Date(state.lastCsvTs).toISOString()}\n`);
   }
 
-  const agg = new BucketAggregator();
+  const agg = new BucketAggregator(state.hourly);
   let maxTs = state.lastCsvTs;
   for (const r of rows) {
     if (r.ts > maxTs) maxTs = r.ts;
@@ -263,6 +268,7 @@ async function parseFromCsv() {
     });
   }
   state.lastCsvTs = maxTs;
+  state.hourly = agg.state();
   cursors.set(SOURCE, state);
 
   return agg.values();
@@ -331,7 +337,7 @@ async function parseFromLocalEstimate() {
   }
 
   const seen = new Set(Object.keys(state.seenComposers));
-  const agg = new BucketAggregator();
+  const agg = new BucketAggregator(state.hourly);
 
   for (const [composerId, cd] of composerById) {
     if (seen.has(composerId)) continue;
@@ -366,6 +372,7 @@ async function parseFromLocalEstimate() {
   const idArr = Array.from(seen);
   state.seenComposers = {};
   for (const id of idArr.slice(-5000)) state.seenComposers[id] = 1;
+  state.hourly = agg.state();
   cursors.set(SOURCE, state);
 
   return agg.values();

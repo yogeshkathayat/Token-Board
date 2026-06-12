@@ -1,31 +1,30 @@
 import Foundation
 
-/// Tiny REST client for the user-JWT-protected endpoints. The bar app
-/// authenticates by trading the CLI's device token for a session-equivalent
-/// JWT — actually, no: device tokens are for ingest only. So instead we read
-/// the user's *refresh cookie* from the dashboard's localStorage … which is
-/// fiddly.
-///
-/// For v1, the bar app uses the device token directly against a thin
-/// `/api/v1/usage/me-summary` shortcut that the API can be extended with.
-/// Until that shortcut exists, the bar app falls back to a local file the
-/// CLI writes after each sync (`~/.tokenboard/last-summary.json`).
-///
-/// Today the simplest reliable path is: ask the user to paste a personal
-/// access token (PAT) once, store it in Keychain, use it for reads. We model
-/// that in the UI; this client just wraps the bearer.
+/// Tiny REST client for the user-JWT-protected read endpoints (`/api/v1/usage/*`).
+/// The user pastes a personal access token (PAT) once; it's stored in a 0600
+/// file (see Settings) and sent as a Bearer token on each read.
 enum APIError: Error, LocalizedError {
     case notConfigured
+    case insecureURL
     case http(Int, String)
     case decode(String)
 
     var errorDescription: String? {
         switch self {
         case .notConfigured: return "Run `tokenboard init` on this Mac first."
+        case .insecureURL: return "Refusing to send your token over plain HTTP to a remote host. Use an https:// server URL."
         case .http(let code, let body): return "HTTP \(code): \(body)"
         case .decode(let msg): return "Decode failed: \(msg)"
         }
     }
+}
+
+/// A token may travel in cleartext only to the local machine. For any remote
+/// host we require https so the long-lived PAT isn't exposed on the wire.
+private func isTokenTransportAllowed(_ url: URL) -> Bool {
+    if url.scheme == "https" { return true }
+    let host = url.host?.lowercased() ?? ""
+    return host == "localhost" || host == "127.0.0.1" || host == "::1" || host.hasSuffix(".local")
 }
 
 actor APIClient {
@@ -38,10 +37,14 @@ actor APIClient {
     }
 
     private func request<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
+        guard isTokenTransportAllowed(baseURL) else { throw APIError.insecureURL }
         var comps = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { comps.queryItems = query }
         var req = URLRequest(url: comps.url!)
         req.httpMethod = "GET"
+        // Bound the request — URLSession.shared defaults to a 60s request / 7-day
+        // resource timeout, which would hang the always-running refresh.
+        req.timeoutInterval = 20
         req.setValue("Bearer \(userToken)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
 

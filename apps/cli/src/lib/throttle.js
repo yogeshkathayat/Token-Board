@@ -8,6 +8,7 @@ const DEFAULTS = {
   jitterMaxMs: 60_000,
   initialBackoffMs: 60_000,
   maxBackoffMs: 30 * 60_000,
+  partialDrainRetryMs: 15_000, // retry soon when the queue wasn't fully drained
 };
 
 function loadState() {
@@ -31,12 +32,16 @@ function shouldAutoSync(now = Date.now()) {
   return now >= (s.nextAllowedAtMs || 0);
 }
 
-function recordSuccess() {
+function recordSuccess(fullyDrained = true) {
   const now = Date.now();
   const jitter = Math.floor(Math.random() * DEFAULTS.jitterMaxMs);
+  // When the queue still has pending batches (we hit the per-run batch cap),
+  // retry shortly instead of resetting to the full 10-minute interval — so a
+  // large backlog drains promptly rather than over many hours.
+  const nextDelay = fullyDrained ? DEFAULTS.intervalMs + jitter : DEFAULTS.partialDrainRetryMs;
   saveState({
     lastSuccessMs: now,
-    nextAllowedAtMs: now + DEFAULTS.intervalMs + jitter,
+    nextAllowedAtMs: now + nextDelay,
     backoffStep: 0,
     lastError: null,
   });

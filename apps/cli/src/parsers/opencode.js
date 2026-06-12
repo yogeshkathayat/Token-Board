@@ -66,7 +66,7 @@ async function parse() {
   }
   db.close();
 
-  const agg = new BucketAggregator();
+  const agg = new BucketAggregator(state.hourly);
   let maxId = state.lastRowId;
   for (const r of rows) {
     if (r.id > maxId) maxId = r.id;
@@ -79,6 +79,7 @@ async function parse() {
     });
   }
   state.lastRowId = maxId;
+  state.hourly = agg.state();
   cursors.set(SOURCE, state);
   return agg.values();
 }

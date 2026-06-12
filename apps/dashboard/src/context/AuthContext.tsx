@@ -19,6 +19,8 @@ interface AuthState {
   startOidc: () => void;
   /** Returns the current access token. Null while signed out. */
   getAccessToken: () => string | null;
+  /** Refresh the session and return a fresh access token (or null on failure). */
+  refreshAccessToken: () => Promise<string | null>;
   /** Force a refresh — used after OIDC redirect populates the URL hash. */
   bootstrap: () => Promise<void>;
 }
@@ -51,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const fetchMe = useCallback(async () => {
     if (!tokenRef.current) return null;
-    const res = await fetch(`${API_BASE}/me`, {
+    const res = await fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${tokenRef.current}` },
     });
     if (!res.ok) return null;
@@ -59,16 +61,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return json.user ?? null;
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<string | null> => {
     const res = await fetch(`${API_BASE}/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // Refresh failed — the session is gone. Clear it so the app falls back to
+      // the login screen instead of rendering broken authenticated pages.
+      setToken(null);
+      setUser(null);
+      return null;
+    }
     const json = (await res.json()) as { access_token: string; user: User };
     setToken(json.access_token);
     setUser(json.user);
-    return json.user;
+    return json.access_token;
   }, [setToken]);
 
   const bootstrap = useCallback(async () => {
@@ -106,7 +114,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(body?.message ?? 'Sign in failed');
+        const message = body?.message ?? 'Sign in failed';
+        setError(message);
+        throw new Error(message);
       }
       const json = (await res.json()) as { access_token: string; user: User };
       setToken(json.access_token);
@@ -117,6 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = useCallback(
     async (email: string, password: string, displayName?: string) => {
+      setError(null);
       const res = await fetch(`${API_BASE}/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -125,7 +136,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(body?.message ?? 'Sign up failed');
+        const message = body?.message ?? 'Sign up failed';
+        setError(message);
+        throw new Error(message);
       }
       const json = (await res.json()) as { access_token: string; user: User };
       setToken(json.access_token);
@@ -155,9 +168,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       startOidc,
       getAccessToken: () => tokenRef.current,
+      refreshAccessToken: refresh,
       bootstrap,
     }),
-    [user, loading, error, config, signInWithPassword, signUp, signOut, startOidc, bootstrap],
+    [user, loading, error, config, signInWithPassword, signUp, signOut, startOidc, refresh, bootstrap],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

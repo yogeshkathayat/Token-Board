@@ -57,7 +57,7 @@ async function parse() {
   }
 
   const fd = fs.openSync(file, 'r');
-  const agg = new BucketAggregator();
+  const agg = new BucketAggregator(state.hourly);
   try {
     const len = stat.size - prev.offset;
     const buf = Buffer.alloc(len);
@@ -94,6 +94,7 @@ async function parse() {
     fs.closeSync(fd);
   }
 
+  state.hourly = agg.state();
   cursors.set(SOURCE, state);
   return agg.values();
 }

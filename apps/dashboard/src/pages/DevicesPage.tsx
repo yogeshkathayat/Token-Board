@@ -11,6 +11,7 @@ export function DevicesPage() {
   const client = useApiClient();
   const [code, setCode] = useState<LinkCode | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -20,9 +21,12 @@ export function DevicesPage() {
 
   async function generate() {
     setBusy(true);
+    setError(null);
     try {
       const next = await client.request<LinkCode>('/auth/link-code-init', { method: 'POST' });
       setCode(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate a link code. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -57,6 +61,8 @@ export function DevicesPage() {
         <button onClick={generate} disabled={busy} className="btn-primary mt-3">
           {busy ? 'Generating…' : code ? 'Generate another code' : 'Generate code'}
         </button>
+
+        {error && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
         {code && (
           <div className="mt-6 space-y-5">

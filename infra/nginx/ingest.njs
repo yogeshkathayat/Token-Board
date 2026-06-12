@@ -9,8 +9,11 @@ async function handle(r) {
   let hash = '';
 
   const isJwt = token && token.split('.').length === 3;
+  // Hashing is on unless explicitly disabled via INGEST_BEARER_HASH=false.
+  const hashEnabled = (process.env.INGEST_BEARER_HASH || 'true') !== 'false'
+    && (process.env.INGEST_BEARER_HASH || 'true') !== '0';
 
-  if (token && !isJwt) {
+  if (token && !isJwt && hashEnabled) {
     const data = new TextEncoder().encode(token);
     const buf = await crypto.subtle.digest('SHA-256', data);
     hash = Array.from(new Uint8Array(buf))
@@ -21,11 +24,13 @@ async function handle(r) {
   const headers = {
     'Content-Type': r.headersIn['Content-Type'] || 'application/json',
     'X-Real-IP': r.remoteAddress,
-    'X-Forwarded-For': r.headersIn['X-Forwarded-For'] || r.remoteAddress,
+    // Set from the real peer only — never trust a client-supplied X-Forwarded-For.
+    'X-Forwarded-For': r.remoteAddress,
     'X-Forwarded-Proto': r.headersIn['X-Forwarded-Proto'] || 'https',
   };
   if (hash) headers['x-tokenboard-device-token-hash'] = hash;
-  if (isJwt) headers['Authorization'] = 'Bearer ' + token;
+  // When hashing is disabled, forward the raw bearer so the API can hash it.
+  if (isJwt || (token && !hashEnabled)) headers['Authorization'] = 'Bearer ' + token;
 
   try {
     const resp = await ngx.fetch('http://api:3000/api/v1/ingest', {

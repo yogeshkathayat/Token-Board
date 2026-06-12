@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 
 import { config, isOidcConfigured } from '../config.js';
 import { issueAccessToken } from '../auth/jwt.js';
-import { generateLinkCode, generateOpaqueToken, hashToken } from '../auth/tokens.js';
+import { deviceHashFromToken, generateLinkCode, generateOpaqueToken } from '../auth/tokens.js';
 import {
   REFRESH_COOKIE_NAME,
   issueRefreshToken,
@@ -123,7 +123,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return reply.redirect(r.authorizeUrl, 302);
   });
 
-  app.get('/oidc/callback', async (req, reply) => {
+  app.get('/oidc/callback', { config: limit }, async (req, reply) => {
     const query = req.query as { code?: string; state?: string };
     const signed = req.cookies[OIDC_STATE_COOKIE];
     const unsigned = signed ? req.unsignCookie(signed) : { valid: false, value: null };
@@ -147,6 +147,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       provider: 'oidc',
       sub: info.sub,
       email: info.email,
+      emailVerified: info.emailVerified,
       displayName: info.name,
       avatarUrl: info.picture,
     });
@@ -168,7 +169,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---------- Personal access tokens (long-lived auth for the menu bar etc.) ----------
-  app.post('/personal-token', { preHandler: app.requireUser }, async (req, reply) => {
+  app.post('/personal-token', { preHandler: app.requireInteractive, config: limit }, async (req, reply) => {
     const body = (req.body as { name?: string }) ?? {};
     const { token, hash } = generateOpaqueToken();
     const inserted = await app.db
@@ -216,16 +217,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---------- Device tokens (for the CLI) ----------
-  app.post('/device-token', { preHandler: app.requireUser }, async (req, reply) => {
+  app.post('/device-token', { preHandler: app.requireInteractive, config: limit }, async (req, reply) => {
     const body = (req.body as { device_name?: string; platform?: string }) ?? {};
-    const { token, hash } = generateOpaqueToken();
+    const { token } = generateOpaqueToken();
     const inserted = await app.db
       .insertInto('tb_devices')
       .values({
         user_id: req.authUser!.sub,
         name: body.device_name ?? 'unnamed',
         platform: body.platform ?? null,
-        token_hash: hash,
+        token_hash: deviceHashFromToken(token),
       })
       .returning(['id', 'created_at'])
       .executeTakeFirstOrThrow();
@@ -233,7 +234,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // ---------- Link code (CLI ↔ browser handshake) ----------
-  app.post('/link-code-init', { preHandler: app.requireUser }, async (req) => {
+  app.post('/link-code-init', { preHandler: app.requireInteractive, config: limit }, async (req) => {
     const code = generateLinkCode();
     const expiresAt = new Date(Date.now() + config.linkCodeTtlSeconds * 1000);
     await app.db
@@ -276,7 +277,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           user_id: row.user_id,
           name: body.device_name ?? 'unnamed',
           platform: body.platform ?? null,
-          token_hash: hash,
+          token_hash: deviceHashFromToken(token),
         })
         .returning(['id'])
         .executeTakeFirstOrThrow();

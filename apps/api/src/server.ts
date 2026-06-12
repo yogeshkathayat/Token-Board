@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { config, isOidcConfigured } from './config.js';
-import { db, closeDb } from './db/index.js';
+import { db, closeDb, pingDb } from './db/index.js';
 import { registerPlugins } from './plugins/index.js';
 import { registerRoutes } from './routes/index.js';
 import { installScriptRoutes } from './routes/install.js';
@@ -41,8 +41,17 @@ export async function buildServer(): Promise<FastifyInstance> {
     });
   });
 
+  // Liveness only — the process is up. Cheap and dependency-free.
   app.get('/healthz', async () => ({ ok: true }));
-  app.get('/api/v1/healthz', async () => ({ ok: true, oidc: isOidcConfigured() }));
+  // Readiness — verifies the DB is actually reachable so an LB/uptime check can
+  // tell a wedged-but-running API apart from a healthy one.
+  app.get('/api/v1/healthz', async (_req, reply) => {
+    const dbOk = await pingDb();
+    if (!dbOk) {
+      return reply.code(503).send({ ok: false, db: false, oidc: isOidcConfigured() });
+    }
+    return { ok: true, db: true, oidc: isOidcConfigured() };
+  });
 
   app.addHook('onClose', async () => {
     await closeDb();
@@ -57,6 +66,24 @@ async function start(): Promise<void> {
     startLeaderboardCron(app);
   }
   await app.listen({ port: config.port, host: config.host });
+
+  // Graceful shutdown: let Fastify drain in-flight requests and run onClose
+  // hooks (stop the cron, close the DB pool) before the container exits.
+  let shuttingDown = false;
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      app.log.info({ signal }, 'shutting down');
+      app
+        .close()
+        .then(() => process.exit(0))
+        .catch((err) => {
+          app.log.error({ err }, 'error during shutdown');
+          process.exit(1);
+        });
+    });
+  }
 }
 
 const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;

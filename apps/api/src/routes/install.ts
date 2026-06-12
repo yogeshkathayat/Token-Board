@@ -89,7 +89,7 @@ function escapeShellSingleLine(s: string): string {
 }
 
 export async function installScriptRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/install.sh', async (req, reply) => {
+  app.get('/install.sh', { config: { rateLimit: { max: 30, timeWindow: 60 * 60 * 1000 } } }, async (req, reply) => {
     const codeRaw = (req.query as { code?: string }).code;
     const code = typeof codeRaw === 'string' && /^[A-Z0-9]{6}$/i.test(codeRaw)
       ? codeRaw.toUpperCase()

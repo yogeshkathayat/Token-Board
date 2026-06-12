@@ -219,7 +219,7 @@ struct ConnectPrompt: View {
                         .buttonStyle(.bordered)
                 }
             } else {
-                Text("Paste your Token Board personal access token in Settings to start showing usage. The token is stored in your macOS Keychain.")
+                Text("Paste your Token Board personal access token in Settings to start showing usage. The token is stored in a private 0600 file under Application Support.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 Button("Open Settings", action: onSettings)
@@ -269,7 +269,7 @@ struct SettingsView: View {
                 }
                 SecureField(vm.hasStoredToken ? "paste a new token to replace" : "paste token", text: $vm.tokenInput)
                     .textFieldStyle(.roundedBorder)
-                Text("Paste a JWT from `POST /api/v1/auth/login`. Stored in Keychain.")
+                Text("Paste a personal access token from the dashboard (Settings → Personal tokens). Stored in a private 0600 file.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

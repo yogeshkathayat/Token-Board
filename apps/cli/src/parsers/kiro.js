@@ -123,7 +123,7 @@ async function parse() {
   }
   db.close();
 
-  const agg = new BucketAggregator();
+  const agg = new BucketAggregator(state.hourly);
   const seenRequests = new Set(Object.keys(state.seenRequests));
   let maxUpdatedAt = state.lastUpdatedAt;
 
@@ -171,6 +171,7 @@ async function parse() {
   state.seenRequests = {};
   for (const id of reqArr.slice(-5000)) state.seenRequests[id] = 1;
   state.lastUpdatedAt = maxUpdatedAt;
+  state.hourly = agg.state();
   cursors.set(SOURCE, state);
 
   return agg.values();

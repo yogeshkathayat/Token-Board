@@ -40,6 +40,7 @@ export async function rotateRefreshToken(refreshToken: string): Promise<{
       .selectFrom('tb_sessions')
       .select(['id', 'user_id', 'expires_at'])
       .where('refresh_token_hash', '=', oldHash)
+      .forUpdate()
       .executeTakeFirst();
     if (!session) return null;
     if (new Date(session.expires_at as unknown as string).getTime() < Date.now()) return null;

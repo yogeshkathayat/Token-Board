@@ -186,6 +186,76 @@ test('claude parser emits cumulative bucket totals across runs (not just deltas)
   assert.equal(second[0].total_tokens, 343);
 });
 
+const ALLOWED_BUCKET_KEYS = new Set([
+  'hour_start',
+  'source',
+  'model',
+  'input_tokens',
+  'cached_input_tokens',
+  'cache_creation_input_tokens',
+  'output_tokens',
+  'reasoning_output_tokens',
+  'total_tokens',
+  'conversation_count',
+]);
+
+test('claude parser captures ONLY token counts — never prompt/response/file content (privacy invariant)', async () => {
+  reset();
+  // Feed events stuffed with content the parser must never forward: prompt text,
+  // assistant response text, file paths, cwd, git branch, project name.
+  writeProject('priv', 'history.jsonl', [
+    {
+      uuid: 'u',
+      timestamp: '2026-05-07T10:05:00Z',
+      role: 'user',
+      cwd: '/Users/secret/projects/acme-merger',
+      gitBranch: 'feature/secret-launch',
+      message: {
+        id: 'm-user',
+        role: 'user',
+        content: 'PROMPT: please refactor the salary spreadsheet at /Users/secret/payroll.xlsx',
+      },
+    },
+    {
+      uuid: 'v',
+      timestamp: '2026-05-07T10:06:00Z',
+      toolUseResult: { stdout: 'CONFIDENTIAL build output', file: { path: '/etc/passwd' } },
+      message: {
+        id: 'm-assistant',
+        role: 'assistant',
+        model: 'claude-opus-4',
+        content: 'RESPONSE: here is the secret plan ...',
+        usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 20 },
+      },
+    },
+  ]);
+
+  const claude = require('../src/parsers/claude.js');
+  const buckets = await claude.parse();
+  assert.equal(buckets.length, 1);
+
+  const serialized = JSON.stringify(buckets);
+  for (const leak of [
+    'PROMPT',
+    'RESPONSE',
+    'CONFIDENTIAL',
+    'payroll',
+    'acme-merger',
+    'feature/secret-launch',
+    'passwd',
+    '/Users/secret',
+    'content',
+    'cwd',
+  ]) {
+    assert.ok(!serialized.includes(leak), `bucket payload must not contain "${leak}"`);
+  }
+  for (const b of buckets) {
+    for (const k of Object.keys(b)) {
+      assert.ok(ALLOWED_BUCKET_KEYS.has(k), `unexpected bucket field "${k}" — only token counts/timestamps allowed`);
+    }
+  }
+});
+
 test('claude parser is incremental across runs', async () => {
   reset();
   writeProject('p2', 'history.jsonl', [

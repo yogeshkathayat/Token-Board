@@ -82,6 +82,7 @@ export async function findOrCreateOidcUser(input: {
   provider: string;
   sub: string;
   email: string;
+  emailVerified: boolean;
   displayName?: string | null;
   avatarUrl?: string | null;
 }): Promise<UserRecord> {
@@ -106,9 +107,18 @@ export async function findOrCreateOidcUser(input: {
 
   if (link) return link;
 
-  // Either create new user or link an existing one matched by email.
+  // Either create a new user or link an existing one matched by email. Only
+  // auto-link to a pre-existing account when the IdP asserts the email is
+  // verified — otherwise an IdP account with an unverified (attacker-chosen)
+  // email could be used to take over an existing TokenBoard account.
   const existing = await findUserByEmail(email);
   if (existing) {
+    if (!input.emailVerified) {
+      throw Object.assign(
+        new Error('IdP email is not verified; cannot link to an existing account'),
+        { statusCode: 403 },
+      );
+    }
     await db
       .insertInto('tb_oidc_links')
       .values({ user_id: existing.id, provider: input.provider, sub: input.sub })

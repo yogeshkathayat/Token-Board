@@ -6,7 +6,6 @@ import {
   daysAgoLocal,
   parseDate,
   parseTz,
-  pgLocalDateExpr,
   rangeDays,
   todayLocal,
 } from '../services/dates.js';
@@ -31,7 +30,9 @@ export async function usageRoutes(app: FastifyInstance): Promise<void> {
     const from = parseDate(q.from, daysAgoLocal(29, tz));
     assertRangeWithinMax(from, to);
     const userId = req.authUser!.sub;
-    const dateExpr = pgLocalDateExpr(tz);
+    const dayCol = tz.iana
+      ? sql<string>`to_char((hour_start at time zone ${tz.iana}), 'YYYY-MM-DD')`
+      : sql<string>`to_char((hour_start + (${tz.offsetMinutes ?? 0} || ' minutes')::interval), 'YYYY-MM-DD')`;
 
     let qb = app.db
       .selectFrom('tb_usage_buckets')
@@ -43,8 +44,8 @@ export async function usageRoutes(app: FastifyInstance): Promise<void> {
         fn.sum<string>('total_tokens').as('total_tokens'),
       ])
       .where('user_id', '=', userId)
-      .where(sql.raw<string>(dateExpr.sql.replace('?', String(JSON.stringify(dateExpr.param)).replace(/^"|"$/g, "'"))), '>=', from)
-      .where(sql.raw<string>(dateExpr.sql.replace('?', String(JSON.stringify(dateExpr.param)).replace(/^"|"$/g, "'"))), '<=', to);
+      .where(dayCol, '>=', from)
+      .where(dayCol, '<=', to);
 
     if (q.source) qb = qb.where('source', '=', q.source);
     if (q.model) qb = qb.where('model', '=', q.model);

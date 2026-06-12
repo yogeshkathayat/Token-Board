@@ -89,6 +89,45 @@ if (!Database) {
     assert.equal(b.hour_start, '2026-05-07T10:00:00.000Z');
   });
 
+  test('kiro: captures only token counts — never conversation content (privacy invariant)', async () => {
+    reset();
+    const ALLOWED = new Set([
+      'hour_start', 'source', 'model', 'input_tokens', 'cached_input_tokens',
+      'cache_creation_input_tokens', 'output_tokens', 'reasoning_output_tokens',
+      'total_tokens', 'conversation_count',
+    ]);
+    // The kiro parser JSON.parses the full conversation blob (message bodies),
+    // so this guards that none of that text reaches the emitted bucket.
+    const conv = JSON.stringify({
+      conversation_id: 'c1',
+      history: [
+        {
+          user: { content: 'SECRET prompt: migrate the payroll DB at /Users/secret/db' },
+          assistant: { Response: 'CONFIDENTIAL assistant reply text' },
+          request_metadata: {
+            request_id: 'r1',
+            request_start_timestamp_ms: Date.parse('2026-05-07T10:05:00Z'),
+            user_prompt_length: 400,
+            response_size: 200,
+            model_id: 'kiro-fast',
+          },
+        },
+      ],
+    });
+    setupDb([{ key: 'workspace', id: 'c1', value: conv, created_at: 1, updated_at: 100 }]);
+
+    const kiro = require('../src/parsers/kiro.js');
+    const buckets = await kiro.parse();
+    assert.equal(buckets.length, 1);
+    const serialized = JSON.stringify(buckets);
+    for (const leak of ['SECRET', 'CONFIDENTIAL', 'payroll', '/Users/secret', 'content', 'Response']) {
+      assert.ok(!serialized.includes(leak), `bucket must not contain "${leak}"`);
+    }
+    for (const k of Object.keys(buckets[0])) {
+      assert.ok(ALLOWED.has(k), `unexpected bucket field "${k}"`);
+    }
+  });
+
   test('kiro: dedupes by request_id across runs', async () => {
     reset();
     const conv = JSON.stringify({

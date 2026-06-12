@@ -46,19 +46,23 @@ else
 endif
 
 migrate:
-	$(COMPOSE) --env-file $(ENV_FILE) exec api npm --workspace apps/api run migrate
+	$(COMPOSE) --env-file $(ENV_FILE) exec api npm --workspace apps/api run migrate:prod
 
 backup:
 	@mkdir -p backups
-	@TS=$$(date +%Y-%m-%d_%H%M); \
+	@set -o pipefail; TS=$$(date +%Y-%m-%d_%H%M); \
 	$(COMPOSE) --env-file $(ENV_FILE) exec -T db \
-		pg_dump -U $${DB_USER:-tokenboard} $${DB_NAME:-tokenboard} | gzip > backups/$$TS.sql.gz; \
+		pg_dump --clean --if-exists -U $${DB_USER:-tokenboard} $${DB_NAME:-tokenboard} | gzip > backups/$$TS.sql.gz \
+		|| { echo "backup FAILED — removing truncated file"; rm -f backups/$$TS.sql.gz; exit 1; }; \
 	echo "Wrote backups/$$TS.sql.gz"
+	@echo "Note: dumps contain password/token hashes — store them encrypted and access-controlled."
 
 restore:
 	@if [ -z "$(F)" ]; then echo "Usage: make restore F=backups/2026-05-07_1200.sql.gz"; exit 1; fi
-	gunzip -c $(F) | $(COMPOSE) --env-file $(ENV_FILE) exec -T db \
-		psql -U $${DB_USER:-tokenboard} $${DB_NAME:-tokenboard}
+	@echo "Restore runs in a single transaction and aborts on the first error."
+	@echo "Quiesce writers first (make down then start only db) to avoid racing live ingest."
+	set -o pipefail; gunzip -c $(F) | $(COMPOSE) --env-file $(ENV_FILE) exec -T db \
+		psql -v ON_ERROR_STOP=1 --single-transaction -U $${DB_USER:-tokenboard} $${DB_NAME:-tokenboard}
 
 status:
 	$(COMPOSE) --env-file $(ENV_FILE) ps

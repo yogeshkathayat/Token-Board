@@ -12,7 +12,9 @@
     "test:integration": "node --test --import tsx --test-reporter spec test/integration/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate": "node --import tsx src/db/migrate.ts up",
-    "migrate:down": "node --import tsx src/db/migrate.ts down"
+    "migrate:down": "node --import tsx src/db/migrate.ts down",
+    "migrate:prod": "node dist/db/migrate.js up",
+    "migrate:down:prod": "node dist/db/migrate.js down"
   },
   "dependencies": {
     "@tokenboard/shared": "*",

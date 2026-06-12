@@ -239,10 +239,12 @@ async function parse() {
     if (b.total_tokens > 0 || b.conversation_count > 0) out.push({ ...b });
   }
   if (out.length > 0 && convCount > 0) {
-    // Distribute conversations to the latest bucket of each model.
-    // (Per-bucket convcount attribution is a separate cleanup.)
-    out[out.length - 1].conversation_count = convCount;
-    hourly[touchedKeys[touchedKeys.length - 1]].conversation_count = convCount;
+    // Attribute this run's conversations to the latest touched bucket. ADD to
+    // the persisted cumulative (don't overwrite) and emit the cumulative value,
+    // so the API's REPLACE upsert doesn't clobber earlier runs' counts.
+    const lastKey = touchedKeys[touchedKeys.length - 1];
+    hourly[lastKey].conversation_count = (hourly[lastKey].conversation_count || 0) + convCount;
+    out[out.length - 1].conversation_count = hourly[lastKey].conversation_count;
   }
 
   state.hourly = hourly;

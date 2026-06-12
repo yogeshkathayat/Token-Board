@@ -8,6 +8,16 @@ function requireEnv(name: string): string {
   return v;
 }
 
+function requireSecret(name: string, minBytes: number): string {
+  const v = requireEnv(name);
+  if (Buffer.byteLength(v, 'utf8') < minBytes) {
+    throw new Error(
+      `${name} must be at least ${minBytes} bytes (got ${Buffer.byteLength(v, 'utf8')}). Generate one with: openssl rand -base64 48`,
+    );
+  }
+  return v;
+}
+
 function bool(name: string, fallback: boolean): boolean {
   const v = process.env[name];
   if (v === undefined) return fallback;
@@ -21,6 +31,17 @@ function int(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function requirePublicUrl(): string {
+  const v = process.env.PUBLIC_URL;
+  if (v) return v;
+  // PUBLIC_URL drives OIDC redirects, CORS origin, and the install one-liner.
+  // A silent localhost default in production breaks all three, so fail fast.
+  if ((process.env.NODE_ENV ?? 'development') === 'production') {
+    throw new Error('Missing required env var: PUBLIC_URL (e.g. https://usage.acme.com)');
+  }
+  return 'http://localhost:3000';
+}
+
 const allowedDomains = (process.env.ALLOWED_EMAIL_DOMAINS ?? '')
   .split(',')
   .map((s) => s.trim().toLowerCase())
@@ -30,9 +51,9 @@ export const config = {
   env: process.env.NODE_ENV ?? 'development',
   port: int('PORT', 3000),
   host: process.env.HOST ?? '0.0.0.0',
-  publicUrl: process.env.PUBLIC_URL ?? 'http://localhost:3000',
+  publicUrl: requirePublicUrl(),
   databaseUrl: requireEnv('DATABASE_URL'),
-  jwtSecret: requireEnv('JWT_SECRET'),
+  jwtSecret: requireSecret('JWT_SECRET', 32),
   logLevel: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
 
   // Auth
@@ -51,6 +72,7 @@ export const config = {
   refreshTtlSeconds: int('REFRESH_TTL_SECONDS', 60 * 60 * 24 * 30),
   linkCodeTtlSeconds: int('LINK_CODE_TTL_SECONDS', 600),
   leaderboardRefreshDisabled: bool('LEADERBOARD_REFRESH_DISABLED', false),
+  leaderboardTz: process.env.LEADERBOARD_TZ || 'UTC',
 
   // Rate limits
   authRateMax: int('AUTH_RATE_MAX', 60),

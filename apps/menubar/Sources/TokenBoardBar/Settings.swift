@@ -42,7 +42,17 @@ final class Settings {
 
     var userToken: String? {
         get {
-            guard let data = try? Data(contentsOf: Self.tokenFile),
+            let url = Self.tokenFile
+            // Don't trust a token file that is group/world-accessible — another
+            // local user may have written or read it. Treat it as absent.
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+               let perms = (attrs[.posixPermissions] as? NSNumber)?.intValue,
+               (perms & 0o077) != 0 {
+                FileHandle.standardError.write(
+                    Data("[tokenboard] token file has unsafe permissions (\(String(perms, radix: 8))); ignoring\n".utf8))
+                return nil
+            }
+            guard let data = try? Data(contentsOf: url),
                   let s = String(data: data, encoding: .utf8) else { return nil }
             let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
@@ -51,10 +61,10 @@ final class Settings {
             let url = Self.tokenFile
             if let v = newValue, !v.isEmpty {
                 let data = Data(v.utf8)
-                try? data.write(to: url, options: .atomic)
-                // mode 0600
-                try? FileManager.default.setAttributes(
-                    [.posixPermissions: 0o600], ofItemAtPath: url.path
+                // Create with 0600 from the start so the token is never briefly
+                // world-readable between write and chmod.
+                FileManager.default.createFile(
+                    atPath: url.path, contents: data, attributes: [.posixPermissions: 0o600]
                 )
             } else {
                 try? FileManager.default.removeItem(at: url)

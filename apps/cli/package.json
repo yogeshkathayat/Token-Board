@@ -17,15 +17,13 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
-    "lint": "node -e \"require('fs').readdirSync('src/lib', {recursive:true})\""
+    "lint": "node scripts/lint.js"
   },
   "engines": {
     "node": ">=20"
   },
-  "dependencies": {
-    "better-sqlite3": "11.3.0"
-  },
   "optionalDependencies": {
+    "better-sqlite3": "11.3.0",
     "keytar": "7.9.0"
   },
   "publishConfig": {

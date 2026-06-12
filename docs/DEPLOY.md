@@ -87,7 +87,7 @@ make migrate     # apply database migrations
 make logs        # tail (Ctrl-C to detach)
 ```
 
-In a fresh environment, the API container will refuse to start until `make migrate` succeeds. After migration the leaderboard cron will run every 5 minutes.
+In a fresh environment, run `make migrate` before serving traffic — until the schema exists, API requests that touch the database will error (and `GET /api/v1/healthz` reports `db: false`). After migration the leaderboard cron runs every 5 minutes. `make migrate` runs the compiled migrator inside the API container and is safe to re-run.
 
 ## 6. Smoke test
 

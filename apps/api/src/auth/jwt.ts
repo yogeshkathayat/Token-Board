@@ -14,6 +14,8 @@ export interface AccessTokenPayload {
   iat: number;
   exp: number;
   jti: string;
+  /** True when this principal was resolved from a personal access token rather than a session JWT. */
+  pat?: boolean;
 }
 
 function b64url(buf: Buffer | string): string {

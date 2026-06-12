@@ -4,9 +4,8 @@ import assert from 'node:assert/strict';
 process.env.JWT_SECRET = 'test-secret-32-bytes-long-aaaaaaaaaaaa';
 process.env.DATABASE_URL = 'postgres://test/test';
 
-const { generateOpaqueToken, hashToken, generateLinkCode } = await import(
-  '../../src/auth/tokens.js'
-);
+const { generateOpaqueToken, hashToken, generateLinkCode, deviceHashFromToken, deviceHashFromSha256 } =
+  await import('../../src/auth/tokens.js');
 
 test('generateOpaqueToken returns matching hash', () => {
   const { token, hash } = generateOpaqueToken();
@@ -27,4 +26,17 @@ test('generateOpaqueToken values are not predictable', () => {
   const a = generateOpaqueToken().token;
   const b = generateOpaqueToken().token;
   assert.notEqual(a, b);
+});
+
+test('device hash is peppered: stored value differs from the wire sha256 and is non-replayable', () => {
+  const { token, hash } = generateOpaqueToken();
+  const stored = deviceHashFromToken(token);
+  assert.match(stored, /^[a-f0-9]{64}$/);
+  // The proxy/wire value is sha256(token) (== hash). The at-rest value must NOT
+  // equal it, otherwise a leaked DB hash would itself be a replayable credential.
+  assert.notEqual(stored, hash);
+  // The proxy-hash path and the raw-token path must resolve to the same stored value.
+  assert.equal(deviceHashFromSha256(hash), stored);
+  // Deterministic for a given token.
+  assert.equal(deviceHashFromToken(token), stored);
 });

@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 
-import { hashToken } from './tokens.js';
+import { deviceHashFromSha256, deviceHashFromToken, hashToken } from './tokens.js';
 import { verifyAccessToken, type AccessTokenPayload } from './jwt.js';
 
 declare module 'fastify' {
@@ -11,6 +11,7 @@ declare module 'fastify' {
   }
   interface FastifyInstance {
     requireUser: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
+    requireInteractive: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireAdmin: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     requireDevice: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     optionalUser: (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
@@ -82,6 +83,7 @@ async function resolveAuthUser(
     iat: now,
     exp: now + 3600, // synthetic; real expiry checked above against the row's expires_at
     jti: row.pt_id,
+    pat: true,
   };
 }
 
@@ -95,11 +97,32 @@ export const authPlugin = fp(async (app: FastifyInstance) => {
     req.authUser = payload;
   });
 
+  // Like requireUser, but rejects personal-access-token bearers. Use on routes
+  // that mint new credentials so a leaked PAT can't be used to mint more
+  // (device tokens, further PATs, link codes) — privilege containment.
+  app.decorate('requireInteractive', async (req: FastifyRequest, reply: FastifyReply) => {
+    await app.requireUser(req, reply);
+    if (reply.sent) return;
+    if (req.authUser?.pat) {
+      await reply.code(403).send({
+        error: 'Forbidden',
+        message: 'This action requires an interactive session, not a personal access token',
+      });
+    }
+  });
+
   app.decorate('requireAdmin', async (req: FastifyRequest, reply: FastifyReply) => {
     await app.requireUser(req, reply);
     if (reply.sent) return;
     if (req.authUser?.role !== 'admin') {
       await reply.code(403).send({ error: 'Forbidden', message: 'Admin only' });
+      return;
+    }
+    // A long-lived personal access token (used by the menu bar etc.) must not
+    // unlock admin operations even if minted by an admin — a leaked PAT would
+    // otherwise grant full admin API access. Admin actions require a session JWT.
+    if (req.authUser?.pat) {
+      await reply.code(403).send({ error: 'Forbidden', message: 'Admin actions require an interactive session, not a personal access token' });
     }
   });
 
@@ -113,7 +136,8 @@ export const authPlugin = fp(async (app: FastifyInstance) => {
     let hash: string | null = null;
 
     if (typeof proxyHash === 'string' && /^[a-f0-9]{64}$/i.test(proxyHash)) {
-      hash = proxyHash.toLowerCase();
+      // The proxy forwards sha256(token); pepper it before lookup (see tokens.ts).
+      hash = deviceHashFromSha256(proxyHash);
     } else {
       const token = extractBearer(req);
       if (!token) {
@@ -124,7 +148,7 @@ export const authPlugin = fp(async (app: FastifyInstance) => {
         await reply.code(401).send({ error: 'Unauthorized', message: 'Expected device token' });
         return;
       }
-      hash = hashToken(token);
+      hash = deviceHashFromToken(token);
     }
 
     const row = await app.db

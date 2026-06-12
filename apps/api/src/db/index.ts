@@ -17,6 +17,21 @@ const pool = new pg.Pool({
 
 export const db = new Kysely<DB>({
   dialect: new PostgresDialect({ pool }),
+  log(event) {
+    // Surface slow queries (SLOW_QUERY_MS, documented in CONFIG.md). Log only
+    // the parameterized SQL text and duration — never the bound parameters,
+    // which can contain token hashes and other sensitive values.
+    if (event.level === 'query' && event.queryDurationMillis >= config.slowQueryMs) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          msg: 'slow query',
+          durationMs: Math.round(event.queryDurationMillis),
+          sql: event.query.sql,
+        }),
+      );
+    }
+  },
 });
 
 export async function pingDb(): Promise<boolean> {

@@ -1,6 +1,7 @@
 import { sql } from 'kysely';
 
 import { db } from '../db/index.js';
+import { config } from '../config.js';
 
 export type Period = 'week' | 'month' | 'total';
 
@@ -26,19 +27,70 @@ export const KNOWN_SOURCES = [
 ] as const;
 export type KnownSource = (typeof KNOWN_SOURCES)[number];
 
-export function periodWindow(period: Period, now = new Date()): PeriodWindow {
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+function ymd(y: number, m: number, d: number): string {
+  return `${y}-${pad2(m)}-${pad2(d)}`;
+}
+
+/** The calendar Y/M/D and day-of-week (0=Sun) of `now` as seen in `tz`. */
+function localParts(now: Date, tz: string): { y: number; m: number; d: number; dow: number } {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(now).map((p) => [p.type, p.value]));
+  const dowMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return { y: Number(parts.year), m: Number(parts.month), d: Number(parts.day), dow: dowMap[parts.weekday ?? ''] ?? 0 };
+}
+
+/** Shift a calendar date by `delta` days (pure calendar arithmetic). */
+function shiftYmd(y: number, m: number, d: number, delta: number): { y: number; m: number; d: number } {
+  const t = new Date(Date.UTC(y, m - 1, d + delta));
+  return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate() };
+}
+
+/** Offset (ms) of `tz` from UTC at the given instant. */
+function tzOffsetMs(date: Date, tz: string): number {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const p = Object.fromEntries(fmt.formatToParts(date).map((x) => [x.type, x.value]));
+  const hour = p.hour === '24' ? '00' : p.hour;
+  const asUtc = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(hour), Number(p.minute), Number(p.second));
+  return asUtc - date.getTime();
+}
+
+/** UTC instant of local-midnight (start of day) for a YYYY-MM-DD date in `tz`. */
+function zonedStartOfDayUtc(dateStr: string, tz: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const guess = Date.UTC(y!, m! - 1, d!, 0, 0, 0);
+  const off = tzOffsetMs(new Date(guess), tz);
+  return new Date(guess - off);
+}
+
+export function periodWindow(period: Period, now = new Date(), tz: string = config.leaderboardTz): PeriodWindow {
   if (period === 'total') return { period, from: '1970-01-01', to: '9999-12-31' };
-  const utc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const { y, m, d, dow } = localParts(now, tz);
   if (period === 'month') {
-    const from = new Date(Date.UTC(utc.getUTCFullYear(), utc.getUTCMonth(), 1));
-    const to = new Date(Date.UTC(utc.getUTCFullYear(), utc.getUTCMonth() + 1, 0));
-    return { period, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    return { period, from: ymd(y, m, 1), to: ymd(y, m, lastDay) };
   }
-  // Week — Sunday-start in UTC.
-  const dow = utc.getUTCDay();
-  const from = new Date(utc.getTime() - dow * 86400_000);
-  const to = new Date(from.getTime() + 6 * 86400_000);
-  return { period, from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10) };
+  // Week — Sunday-start, in the configured timezone.
+  const start = shiftYmd(y, m, d, -dow);
+  const end = shiftYmd(start.y, start.m, start.d, 6);
+  return { period, from: ymd(start.y, start.m, start.d), to: ymd(end.y, end.m, end.d) };
 }
 
 interface AggRow {
@@ -55,8 +107,14 @@ interface UserTotals {
 
 export async function refreshSnapshot(period: Period): Promise<{ inserted: number; window: PeriodWindow }> {
   const window = periodWindow(period);
-  const fromDate = new Date(`${window.from}T00:00:00Z`);
-  const toDate = new Date(`${window.to}T23:59:59.999Z`);
+  // Filter on instants aligned to the configured timezone's day boundaries, so
+  // week/month windows match the org's wallclock rather than server UTC.
+  const fromDate =
+    period === 'total' ? new Date('1970-01-01T00:00:00Z') : zonedStartOfDayUtc(window.from, config.leaderboardTz);
+  const toDate =
+    period === 'total'
+      ? new Date('9999-12-31T23:59:59.999Z')
+      : new Date(zonedStartOfDayUtc(window.to, config.leaderboardTz).getTime() + 86_400_000 - 1);
 
   // Single query, group by (user_id, source). Then we pivot in JS — at the
   // user counts that fit on a self-hosted instance this is comfortably fast.

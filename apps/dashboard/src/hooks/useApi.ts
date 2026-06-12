@@ -4,8 +4,11 @@ import { ApiClient, type ApiOptions } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 
 export function useApiClient(): ApiClient {
-  const { getAccessToken } = useAuth();
-  return useMemo(() => new ApiClient(getAccessToken), [getAccessToken]);
+  const { getAccessToken, refreshAccessToken } = useAuth();
+  return useMemo(
+    () => new ApiClient(getAccessToken, refreshAccessToken),
+    [getAccessToken, refreshAccessToken],
+  );
 }
 
 export function useApi<T>(path: string | null, opts: ApiOptions = {}): {

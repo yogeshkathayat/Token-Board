@@ -96,6 +96,7 @@ export function WidgetsPage() {
         <PreviewCard
           today={today.data?.totals.total_tokens}
           sevenDay={sevenDay.data?.totals.total_tokens}
+          failed={Boolean(today.error || sevenDay.error)}
         />
       </section>
 
@@ -234,32 +235,36 @@ cd menubar
   );
 }
 
-function PreviewCard({ today, sevenDay }: { today?: string; sevenDay?: string }) {
+function PreviewCard({ today, sevenDay, failed }: { today?: string; sevenDay?: string; failed?: boolean }) {
+  // When a fetch fails, show a dash rather than spinning on '…' indefinitely.
+  const cell = (v?: string) => (v !== undefined ? formatTokensCompact(v) : failed ? '—' : '…');
+  const sub = (v?: string) => (v !== undefined ? formatTokens(v) : '');
   return (
     <div className="rounded-3xl bg-gradient-to-br from-slate-100 to-slate-200 p-8 dark:from-slate-800 dark:to-slate-900 sm:p-12">
       <div className="mx-auto max-w-md rounded-3xl bg-white p-8 shadow-2xl shadow-slate-300/50 dark:bg-slate-950 dark:shadow-black/50">
+        {failed && (
+          <p className="mb-4 text-center text-xs text-red-600 dark:text-red-400">
+            Couldn’t load your usage — showing no data.
+          </p>
+        )}
         <div className="grid grid-cols-2 gap-6">
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Today
             </div>
             <div className="mt-1 font-mono text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-100">
-              {today === undefined ? '…' : formatTokensCompact(today)}
+              {cell(today)}
             </div>
-            <div className="mt-1 text-xs text-slate-400 tabular-nums">
-              {today === undefined ? '' : formatTokens(today)}
-            </div>
+            <div className="mt-1 text-xs text-slate-400 tabular-nums">{sub(today)}</div>
           </div>
           <div>
             <div className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               7 Days
             </div>
             <div className="mt-1 font-mono text-3xl font-bold tabular-nums text-slate-900 dark:text-slate-100">
-              {sevenDay === undefined ? '…' : formatTokensCompact(sevenDay)}
+              {cell(sevenDay)}
             </div>
-            <div className="mt-1 text-xs text-slate-400 tabular-nums">
-              {sevenDay === undefined ? '' : formatTokens(sevenDay)}
-            </div>
+            <div className="mt-1 text-xs text-slate-400 tabular-nums">{sub(sevenDay)}</div>
           </div>
         </div>
         <div className="mt-6">

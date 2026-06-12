@@ -41,7 +41,7 @@ function tokenObject(r: Record<string, unknown>): Record<TokenColumn, string> {
 }
 
 export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/', { preHandler: app.optionalUser }, async (req, reply) => {
+  app.get('/', { preHandler: app.requireUser }, async (req, reply) => {
     const q = req.query as LeaderboardQuery;
     const period = (q.period ?? 'week') as Period;
     if (!['week', 'month', 'total'].includes(period)) {
@@ -66,6 +66,7 @@ export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
       .select([
         's.user_id',
         's.rank',
+        's.generated_at',
         ...TOKEN_COLUMNS.map((c) => `s.${c}` as never),
         's.is_public',
         sql<string>`coalesce(pv.display_name, u.display_name)`.as('display_name'),
@@ -74,7 +75,10 @@ export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
       ])
       .where('s.period', '=', period)
       .where('s.period_from', '=', window.from as never)
-      .orderBy(sortColumn, 'desc');
+      .orderBy(sortColumn, 'desc')
+      // Deterministic tiebreaker so OFFSET/LIMIT pagination can't drop or
+      // duplicate rows that share a token count.
+      .orderBy('s.user_id', 'asc');
 
     if (metric !== 'all') {
       rowsQ = rowsQ.where(sortColumn, '>', '0' as never);
@@ -91,12 +95,15 @@ export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
     const rows = await rowsQ.limit(limit).offset(offset).execute();
 
     const meId = req.authUser?.sub ?? null;
-    const entries = rows.map((r) => {
+    const entries = rows.map((r, i) => {
       const isMe = meId === r.user_id;
       const isPublic = Boolean(r.is_public);
       return {
         user_id: isPublic ? r.user_id : null,
-        rank: r.rank,
+        // The stored `rank` reflects total_tokens ordering. When sorting by a
+        // specific source metric, the rows are reordered, so display the
+        // position within this metric's ordering instead of the stale total rank.
+        rank: metric === 'all' ? r.rank : offset + i + 1,
         is_me: isMe,
         is_public: isPublic,
         display_name: r.anonymous ? 'Anonymous' : r.display_name ?? 'Anonymous',
@@ -104,6 +111,7 @@ export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
         ...tokenObject(r as Record<string, unknown>),
       };
     });
+    const snapshotAt = rows.length > 0 ? rows[0]!.generated_at : null;
 
     let me: unknown = null;
     if (meId) {
@@ -129,7 +137,9 @@ export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
       metric,
       from: window.from,
       to: window.to,
-      generated_at: new Date().toISOString(),
+      // Age of the underlying snapshot, not the response time — lets clients
+      // surface staleness if the refresh cron has stalled.
+      generated_at: snapshotAt ? new Date(snapshotAt as unknown as string).toISOString() : null,
       page: Math.floor(offset / limit) + 1,
       limit,
       offset,
@@ -141,7 +151,7 @@ export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  app.get('/profile', { preHandler: app.optionalUser }, async (req, reply) => {
+  app.get('/profile', { preHandler: app.requireUser }, async (req, reply) => {
     const q = req.query as { user_id?: string; period?: Period };
     if (!q.user_id) return reply.code(400).send({ error: 'BadRequest', message: 'user_id required' });
     const period = (q.period ?? 'week') as Period;
@@ -169,6 +179,7 @@ export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
         ...TOKEN_COLUMNS.map((c) => `s.${c}` as never),
         sql<string>`coalesce(pv.display_name, u.display_name)`.as('display_name'),
         'u.avatar_url',
+        sql<boolean>`coalesce(pv.anonymous, false)`.as('anonymous'),
       ])
       .where('s.period', '=', period)
       .where('s.period_from', '=', window.from as never)
@@ -176,6 +187,9 @@ export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
       .executeTakeFirst();
 
     if (!entry) return reply.code(404).send({ error: 'NotFound', message: 'No snapshot' });
+    // Respect the anonymity toggle for everyone except the user viewing their
+    // own profile — never leak the real name/avatar of an anonymous user.
+    const anon = Boolean((entry as { anonymous?: boolean }).anonymous) && !isSelf;
     return {
       period,
       from: window.from,
@@ -184,8 +198,8 @@ export async function leaderboardRoutes(app: FastifyInstance): Promise<void> {
       entry: {
         user_id: entry.user_id,
         rank: entry.rank,
-        display_name: entry.display_name,
-        avatar_url: entry.avatar_url,
+        display_name: anon ? 'Anonymous' : entry.display_name,
+        avatar_url: anon ? null : entry.avatar_url,
         ...tokenObject(entry as Record<string, unknown>),
       },
     };

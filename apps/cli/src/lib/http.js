@@ -63,4 +63,4 @@ async function request({ baseUrl, path, method = 'GET', token, body, headers }) 
   }
 }
 
-module.exports = { request };
+module.exports = { request, timeoutMs };

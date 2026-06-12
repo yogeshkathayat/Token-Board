@@ -54,7 +54,7 @@ function* walkSessions(rootDir) {
 async function parse() {
   const state = cursors.get(SOURCE);
   state.files = state.files || {};
-  const agg = new BucketAggregator();
+  const agg = new BucketAggregator(state.hourly);
 
   for (const file of walkSessions(tmpDir())) {
     let stat;
@@ -108,6 +108,7 @@ async function parse() {
     };
   }
 
+  state.hourly = agg.state();
   cursors.set(SOURCE, state);
   return agg.values();
 }

@@ -53,7 +53,7 @@ function asNum(v) {
 async function parse() {
   const state = cursors.get(SOURCE);
   state.files = state.files || {};
-  const agg = new BucketAggregator();
+  const agg = new BucketAggregator(state.hourly);
 
   for (const file of walk(sessionsDir())) {
     let stat;
@@ -64,7 +64,17 @@ async function parse() {
     }
     let prev = state.files[file];
     if (!prev || prev.inode !== stat.ino || prev.size > stat.size) {
-      prev = { inode: stat.ino, offset: 0, size: 0, lastTotal: 0, lastModel: null };
+      prev = {
+        inode: stat.ino,
+        offset: 0,
+        size: 0,
+        lastTotal: 0,
+        lastModel: null,
+        lastInput: 0,
+        lastOutput: 0,
+        lastCached: 0,
+        lastReasoning: 0,
+      };
     }
     if (stat.size <= prev.offset) {
       state.files[file] = prev;
@@ -83,6 +93,10 @@ async function parse() {
 
       let lastTotal = prev.lastTotal || 0;
       let lastModel = prev.lastModel || null;
+      let lastInput = prev.lastInput || 0;
+      let lastOutput = prev.lastOutput || 0;
+      let lastCached = prev.lastCached || 0;
+      let lastReasoning = prev.lastReasoning || 0;
 
       for (const line of usable.split('\n')) {
         if (!line) continue;
@@ -109,15 +123,26 @@ async function parse() {
             reasoning_output_tokens: asNum(last.reasoning_output_tokens),
           };
         } else if (u && typeof u === 'object') {
-          const total = asNum(u.input_tokens) + asNum(u.output_tokens);
+          // `total_token_usage` is cumulative per session/file. Emit the delta
+          // against the last cumulative reading we persisted for THIS file, not
+          // the raw total — otherwise every line re-emits the full running sum.
+          const curInput = asNum(u.input_tokens);
+          const curOutput = asNum(u.output_tokens);
+          const curCached = asNum(u.cached_input_tokens);
+          const curReasoning = asNum(u.reasoning_output_tokens);
+          const total = curInput + curOutput;
           if (total <= lastTotal) continue;
           delta = {
-            input_tokens: asNum(u.input_tokens) - asNum(state.lastInput || 0),
-            cached_input_tokens: asNum(u.cached_input_tokens),
-            output_tokens: asNum(u.output_tokens) - asNum(state.lastOutput || 0),
-            reasoning_output_tokens: asNum(u.reasoning_output_tokens),
+            input_tokens: Math.max(0, curInput - lastInput),
+            cached_input_tokens: Math.max(0, curCached - lastCached),
+            output_tokens: Math.max(0, curOutput - lastOutput),
+            reasoning_output_tokens: Math.max(0, curReasoning - lastReasoning),
           };
           lastTotal = total;
+          lastInput = curInput;
+          lastOutput = curOutput;
+          lastCached = curCached;
+          lastReasoning = curReasoning;
         }
         if (!delta) continue;
         const dtotal =
@@ -132,12 +157,17 @@ async function parse() {
         size: stat.size,
         lastTotal,
         lastModel,
+        lastInput,
+        lastOutput,
+        lastCached,
+        lastReasoning,
       };
     } finally {
       fs.closeSync(fd);
     }
   }
 
+  state.hourly = agg.state();
   cursors.set(SOURCE, state);
   return agg.values();
 }

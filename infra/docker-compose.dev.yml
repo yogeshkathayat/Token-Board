@@ -31,6 +31,12 @@ services:
     volumes:
       - ../apps/dashboard/src:/app/apps/dashboard/src:ro
     command: npm --workspace apps/dashboard run dev -- --host 0.0.0.0
+    # Dev serves Vite on 5173, not nginx on 80 — override the base healthcheck.
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:5173/ >/dev/null 2>&1 || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   proxy:
     environment:

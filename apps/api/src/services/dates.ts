@@ -13,8 +13,21 @@ export interface TzInfo {
   offsetMinutes: number | null;
 }
 
+function isValidIana(tz: string): boolean {
+  try {
+    // Throws RangeError for an unknown time zone identifier.
+    new Intl.DateTimeFormat('en-CA', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function parseTz(query: { tz?: string; tz_offset_minutes?: string | number }): TzInfo {
   if (query.tz && typeof query.tz === 'string') {
+    if (!isValidIana(query.tz)) {
+      throw Object.assign(new Error(`Invalid timezone: ${query.tz}`), { statusCode: 400 });
+    }
     return { iana: query.tz, offsetMinutes: null };
   }
   if (query.tz_offset_minutes !== undefined) {
@@ -69,18 +82,4 @@ export function assertRangeWithinMax(from: string, to: string): void {
   if (days > config.usageMaxDays) {
     throw Object.assign(new Error(`Date range too large (max ${config.usageMaxDays} days)`), { statusCode: 400 });
   }
-}
-
-/**
- * SQL fragment for converting a UTC timestamp to a YYYY-MM-DD string in the
- * requested timezone. Returns the SQL text and parameters separately so it
- * can be inlined into Kysely raw SQL.
- */
-export function pgLocalDateExpr(tz: TzInfo, column = 'hour_start'): { sql: string; param: unknown } {
-  if (tz.iana) {
-    return { sql: `to_char((${column} at time zone ?), 'YYYY-MM-DD')`, param: tz.iana };
-  }
-  const offset = tz.offsetMinutes ?? 0;
-  // Postgres `interval` arithmetic — shift by minutes.
-  return { sql: `to_char((${column} + (? || ' minutes')::interval), 'YYYY-MM-DD')`, param: offset };
 }

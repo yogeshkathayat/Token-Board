@@ -33,12 +33,8 @@ final class UsageViewModel: ObservableObject {
             Settings.shared.baseURL = url
         }
         let trimmed = tokenInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        FileHandle.standardError.write(Data("[tokenboard] saveCredentials url=\(baseURLInput) tokenLen=\(trimmed.count)\n".utf8))
         if !trimmed.isEmpty {
             Settings.shared.userToken = trimmed
-            // Verify it actually wrote
-            let stored = Settings.shared.userToken ?? ""
-            FileHandle.standardError.write(Data("[tokenboard] stored token len=\(stored.count) match=\(stored == trimmed)\n".utf8))
             tokenInput = ""
         }
         refresh()
@@ -54,7 +50,6 @@ final class UsageViewModel: ObservableObject {
     func refresh() {
         let url = Settings.shared.baseURL
         let token = Settings.shared.userToken
-        FileHandle.standardError.write(Data("[tokenboard] refresh url=\(url?.absoluteString ?? "nil") token_len=\(token?.count ?? 0)\n".utf8))
         guard let url = url, let token = token, !token.isEmpty else {
             self.summary = nil
             self.lastError = "Not connected — open Settings."
@@ -115,14 +110,12 @@ final class UsageViewModel: ObservableObject {
                     activeDays7: activeDays,
                     lastSyncAt: Date()
                 )
-                FileHandle.standardError.write(Data("[tokenboard] ✓ today=\(s.today) total=\(s.total)\n".utf8))
                 await MainActor.run {
                     self?.summary = s
                     self?.loading = false
                 }
             } catch {
                 let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                FileHandle.standardError.write(Data("[tokenboard] ✗ error: \(msg)\n".utf8))
                 await MainActor.run {
                     self?.lastError = msg
                     self?.loading = false

@@ -34,6 +34,23 @@ function appendJsonl(file, rows) {
   fs.appendFileSync(file, lines, { mode: 0o600 });
 }
 
+// Find the byte offset just past the next '\n' at or after `from`, scanning to
+// `size`. Returns -1 if no newline is found before EOF.
+function offsetAfterNextNewline(fd, from, size) {
+  const CHUNK = 64 * 1024;
+  let pos = from;
+  const buf = Buffer.alloc(CHUNK);
+  while (pos < size) {
+    const want = Math.min(CHUNK, size - pos);
+    const read = fs.readSync(fd, buf, 0, want, pos);
+    if (read <= 0) break;
+    const nl = buf.subarray(0, read).indexOf(0x0a);
+    if (nl >= 0) return pos + nl + 1;
+    pos += read;
+  }
+  return -1;
+}
+
 function readJsonlSlice(file, fromByte, maxBytes) {
   if (!fs.existsSync(file)) return { rows: [], nextOffset: fromByte };
   const stat = fs.statSync(file);
@@ -45,8 +62,20 @@ function readJsonlSlice(file, fromByte, maxBytes) {
     fs.readSync(fd, buf, 0, len, fromByte);
     const text = buf.toString('utf8');
     const lastNl = text.lastIndexOf('\n');
-    const usable = lastNl >= 0 ? text.slice(0, lastNl) : text;
-    const consumed = lastNl >= 0 ? lastNl + 1 : 0;
+
+    if (lastNl < 0) {
+      // No newline in the whole window. If we read to EOF, the line is still
+      // being appended — wait for more. Otherwise it's a single line longer
+      // than maxBytes (a poison pill): skip past it so the queue can't wedge.
+      const reachedEof = fromByte + len >= stat.size;
+      if (reachedEof) return { rows: [], nextOffset: fromByte };
+      const skipTo = offsetAfterNextNewline(fd, fromByte + len, stat.size);
+      // skipTo < 0 means the oversized line still has no terminator yet.
+      return { rows: [], nextOffset: skipTo < 0 ? fromByte : skipTo };
+    }
+
+    const usable = text.slice(0, lastNl);
+    const consumed = lastNl + 1;
     const rows = usable
       .split('\n')
       .filter(Boolean)

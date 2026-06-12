@@ -39,9 +39,9 @@ Out of scope:
 |---|---|---|
 | `JWT_SECRET` | API container env | Forever (rotate causes mass logout) |
 | `OIDC_CLIENT_SECRET` | API container env | IdP-controlled |
-| User passwords | argon2id-hashed in `ut_users.password_hash` | Per user |
-| Refresh tokens | sha256-hashed in `ut_sessions.refresh_token_hash` | 30 days, rotated on use |
-| Device tokens | sha256-hashed in `ut_devices.token_hash` | Forever, manual revoke |
+| User passwords | argon2id-hashed in `tb_users.password_hash` | Per user |
+| Refresh tokens | sha256-hashed in `tb_sessions.refresh_token_hash` | 30 days, rotated on use |
+| Device tokens | HMAC(JWT_SECRET, sha256(token))-hashed in `tb_devices.token_hash` | Forever, manual revoke |
 | OpenRouter API keys (CLI-side) | OS keychain (keytar) → AES-GCM file fallback | User-controlled |
 
 ## Reporting vulnerabilities

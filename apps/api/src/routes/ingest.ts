@@ -37,6 +37,42 @@ interface IngestBody {
 const MAX_BUCKETS = 1000;
 const MAX_TOKEN_VALUE = 1_000_000_000_000n; // 1T tokens — anything above is bogus
 
+// Privacy layer-3 (see SECURITY.md): with the server's AJV `removeAdditional: 'all'`,
+// declaring the body schema means any field NOT listed here — prompt text, file
+// names, response content — is stripped before the handler ever sees it. Token
+// counts and timestamps are the only things that can cross this boundary.
+const BUCKET_PROPERTIES = {
+  hour_start: { type: 'string' },
+  source: { type: 'string' },
+  model: { type: 'string' },
+  input_tokens: { type: 'number' },
+  cached_input_tokens: { type: 'number' },
+  cache_creation_input_tokens: { type: 'number' },
+  output_tokens: { type: 'number' },
+  reasoning_output_tokens: { type: 'number' },
+  total_tokens: { type: 'number' },
+  conversation_count: { type: 'number' },
+} as const;
+const bucketSchema = { type: 'object', properties: BUCKET_PROPERTIES } as const;
+const subscriptionSchema = {
+  type: 'object',
+  properties: {
+    tool: { type: 'string' },
+    provider: { type: 'string' },
+    product: { type: 'string' },
+    plan_type: { type: ['string', 'null'] },
+    rate_limit_tier: { type: ['string', 'null'] },
+  },
+} as const;
+const ingestBodySchema = {
+  type: 'object',
+  properties: {
+    hourly: { type: 'array', items: bucketSchema },
+    data: { type: 'object', properties: { hourly: { type: 'array', items: bucketSchema } } },
+    device_subscriptions: { type: 'array', items: subscriptionSchema },
+  },
+} as const;
+
 function clampInt(v: unknown): bigint {
   if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return 0n;
   const n = BigInt(Math.floor(v));
@@ -49,6 +85,7 @@ export async function ingestRoutes(app: FastifyInstance): Promise<void> {
     '/ingest',
     {
       preHandler: app.requireDevice,
+      schema: { body: ingestBodySchema },
       config: {
         rateLimit: { max: config.ingestRateMax, timeWindow: config.ingestRateWindowMs, keyGenerator: (req) => `device:${req.deviceContext?.device_id ?? req.ip}` },
       },
