@@ -31,19 +31,16 @@ ENV PORT=3000
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy standalone output
+# Standalone server + static assets. The standalone bundle already includes a pruned
+# node_modules containing `pg`, which is all the plain-JS migrate script needs — so we do
+# NOT copy the full builder node_modules (keeps the image slim and prod-only).
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# Copy migrations
+# Migrations + the plain-Node migrate runner (no tsx at runtime).
 COPY --from=builder /app/migrations ./migrations
-
-# Copy migration script and its dependencies
-COPY --from=builder /app/src/lib/db/migrate.ts ./src/lib/db/migrate.ts
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/node_modules ./node_modules
-
-COPY --chown=nextjs:nodejs ./entrypoint.sh /app/entrypoint.sh
+COPY --from=builder /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --from=builder /app/scripts/entrypoint.sh ./entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 USER nextjs

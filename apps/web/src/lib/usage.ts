@@ -2,138 +2,108 @@ import 'server-only';
 
 import { query } from '@/lib/db/client';
 
-function parseTimezone(tz?: string): string {
+// Only these characters ever appear in IANA tz names; guards the inlined-into-SQL path.
+const TZ_NAME = /^[A-Za-z0-9_+\-/]+$/;
+let TZ_SET: Set<string> | null | undefined;
+
+function isValidTz(tz: string): boolean {
+  if (!TZ_NAME.test(tz)) return false;
+  if (TZ_SET === undefined) {
+    try {
+      const supported = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] })
+        .supportedValuesOf;
+      TZ_SET = supported ? new Set(supported('timeZone')) : null;
+    } catch {
+      TZ_SET = null;
+    }
+  }
+  if (TZ_SET) return TZ_SET.has(tz);
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Return a safe, SQL-inlinable IANA tz, falling back to UTC for anything unrecognized. */
+function safeTz(tz?: string): string {
   if (!tz || tz === 'UTC') return 'UTC';
-  return tz;
+  return isValidTz(tz) ? tz : 'UTC';
 }
 
-function tzBoundary(tz: string, daysAgo: number): string {
-  const now = new Date();
-  const d = new Date(now.getTime() - daysAgo * 86400000);
-  if (tz === 'UTC') {
-    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())).toISOString();
-  }
-  return `timezone('${tz}', date_trunc('day', now() - interval '${daysAgo} days'))`;
-}
-
-function tzStartOfDay(tz: string): string {
-  if (tz === 'UTC') {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
-  }
-  return `timezone('${tz}', date_trunc('day', now()))`;
-}
-
-function tzStartOfWeek(tz: string): string {
-  if (tz === 'UTC') {
-    const now = new Date();
-    const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const dayOfWeek = todayUTC.getUTCDay();
-    const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    todayUTC.setUTCDate(todayUTC.getUTCDate() - diffToMonday);
-    return todayUTC.toISOString();
-  }
-  return `timezone('${tz}', date_trunc('week', now()))`;
-}
-
-function tzStartOfMonth(tz: string): string {
-  if (tz === 'UTC') {
-    const now = new Date();
-    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-  }
-  return `timezone('${tz}', date_trunc('month', now()))`;
+/** SQL expression: start of the current `unit` in `tz`, as a timestamptz. tz MUST be pre-validated. */
+function startExpr(tz: string, unit: 'day' | 'week' | 'month'): string {
+  return `(date_trunc('${unit}', now() AT TIME ZONE '${tz}') AT TIME ZONE '${tz}')`;
 }
 
 interface UsageSummary {
   tz: string;
-  totals: {
-    today: string;
-    week: string;
-    month: string;
-    total: string;
-  };
+  totals: { today: string; week: string; month: string; total: string };
   by_source: Array<{ source: string; total_tokens: string }>;
   by_model: Array<{ model: string; total_tokens: string }>;
   last30: Array<{ day: string; total_tokens: string }>;
 }
 
+async function sumSince(userId: string, sinceExpr: string): Promise<string> {
+  const rows = await query<{ total_tokens: string }>(
+    `SELECT COALESCE(sum(total_tokens), 0)::text AS total_tokens
+       FROM tb_usage_buckets
+      WHERE user_id = $1 AND hour_start >= ${sinceExpr}`,
+    [userId],
+  );
+  return rows[0]?.total_tokens || '0';
+}
+
 export async function getUsageSummary(userId: string, tz?: string): Promise<UsageSummary> {
-  const timezone = parseTimezone(tz);
+  const zone = safeTz(tz);
 
-  const todayStart = tzStartOfDay(timezone);
-  const weekStart = tzStartOfWeek(timezone);
-  const monthStart = tzStartOfMonth(timezone);
-  const totalStart = '1970-01-01T00:00:00.000Z';
-
-  const todayRows = await query<{ total_tokens: string }>(
-    `SELECT COALESCE(sum(total_tokens), 0)::text AS total_tokens
-     FROM tb_usage_buckets
-     WHERE user_id = $1 AND hour_start >= $2`,
-    [userId, todayStart],
-  );
-
-  const weekRows = await query<{ total_tokens: string }>(
-    `SELECT COALESCE(sum(total_tokens), 0)::text AS total_tokens
-     FROM tb_usage_buckets
-     WHERE user_id = $1 AND hour_start >= $2`,
-    [userId, weekStart],
-  );
-
-  const monthRows = await query<{ total_tokens: string }>(
-    `SELECT COALESCE(sum(total_tokens), 0)::text AS total_tokens
-     FROM tb_usage_buckets
-     WHERE user_id = $1 AND hour_start >= $2`,
-    [userId, monthStart],
-  );
-
+  const today = await sumSince(userId, startExpr(zone, 'day'));
+  const week = await sumSince(userId, startExpr(zone, 'week'));
+  const month = await sumSince(userId, startExpr(zone, 'month'));
   const totalRows = await query<{ total_tokens: string }>(
     `SELECT COALESCE(sum(total_tokens), 0)::text AS total_tokens
-     FROM tb_usage_buckets
-     WHERE user_id = $1 AND hour_start >= $2`,
-    [userId, totalStart],
+       FROM tb_usage_buckets WHERE user_id = $1`,
+    [userId],
   );
 
-  const bySource = await query<{ source: string; total_tokens: string }>(
+  const by_source = await query<{ source: string; total_tokens: string }>(
     `SELECT source, sum(total_tokens)::text AS total_tokens
-     FROM tb_usage_buckets
-     WHERE user_id = $1
-     GROUP BY source
-     ORDER BY sum(total_tokens) DESC`,
+       FROM tb_usage_buckets WHERE user_id = $1
+      GROUP BY source ORDER BY sum(total_tokens) DESC`,
     [userId],
   );
 
-  const byModel = await query<{ model: string; total_tokens: string }>(
+  const by_model = await query<{ model: string; total_tokens: string }>(
     `SELECT model, sum(total_tokens)::text AS total_tokens
-     FROM tb_usage_buckets
-     WHERE user_id = $1
-     GROUP BY model
-     ORDER BY sum(total_tokens) DESC
-     LIMIT 10`,
+       FROM tb_usage_buckets WHERE user_id = $1
+      GROUP BY model ORDER BY sum(total_tokens) DESC LIMIT 10`,
     [userId],
   );
 
-  const last30Start = new Date();
-  last30Start.setUTCDate(last30Start.getUTCDate() - 30);
-  const last30Rows = await query<{ day: string; total_tokens: string }>(
-    `SELECT date_trunc('day', hour_start)::date::text AS day,
-            sum(total_tokens)::text AS total_tokens
-     FROM tb_usage_buckets
-     WHERE user_id = $1 AND hour_start >= $2
-     GROUP BY day
-     ORDER BY day ASC`,
-    [userId, last30Start.toISOString()],
+  // 30 local days, zero-filled, bucketed in the user's tz.
+  const dayStart = `date_trunc('day', now() AT TIME ZONE '${zone}')`;
+  const last30 = await query<{ day: string; total_tokens: string }>(
+    `WITH days AS (
+        SELECT generate_series(${dayStart} - interval '29 days', ${dayStart}, interval '1 day') AS d
+     ), agg AS (
+        SELECT date_trunc('day', hour_start AT TIME ZONE '${zone}') AS d, sum(total_tokens) AS t
+          FROM tb_usage_buckets
+         WHERE user_id = $1
+           AND hour_start >= (${dayStart} - interval '29 days') AT TIME ZONE '${zone}'
+         GROUP BY 1
+     )
+     SELECT to_char(days.d, 'YYYY-MM-DD') AS day, COALESCE(agg.t, 0)::text AS total_tokens
+       FROM days LEFT JOIN agg ON agg.d = days.d
+      ORDER BY days.d ASC`,
+    [userId],
   );
 
   return {
-    tz: timezone,
-    totals: {
-      today: todayRows[0]?.total_tokens || '0',
-      week: weekRows[0]?.total_tokens || '0',
-      month: monthRows[0]?.total_tokens || '0',
-      total: totalRows[0]?.total_tokens || '0',
-    },
-    by_source: bySource,
-    by_model: byModel,
-    last30: last30Rows,
+    tz: zone,
+    totals: { today, week, month, total: totalRows[0]?.total_tokens || '0' },
+    by_source,
+    by_model,
+    last30,
   };
 }

@@ -17,7 +17,7 @@ export class Logger {
 
   private _initRootLogger() {
     Logger._rootLogger = pino({
-      level: process.env.LOGGER_LEVEL || 'debug',
+      level: process.env.LOGGER_LEVEL || 'info',
       base: {
         app_name: process.env.APP_NAME!,
         environment: process.env.NODE_ENV!,

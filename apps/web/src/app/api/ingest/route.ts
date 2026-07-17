@@ -56,13 +56,9 @@ export async function POST(req: NextRequest) {
 
   const { buckets } = parsed.data;
   const { userId, deviceId } = identity;
-
-  await query(
-    `INSERT INTO tb_user_profiles (user_id, email)
-     VALUES ($1, $1)
-     ON CONFLICT (user_id) DO NOTHING`,
-    [userId],
-  );
+  // Profile rows are created with the real email at device-token / link-code time; we
+  // deliberately do NOT upsert a profile here (we have no email on the device-token path,
+  // and writing email=userId would poison the company-membership check).
 
   for (const bucket of buckets) {
     const costUsd = estimateCostUsd(bucket.model, bucket);

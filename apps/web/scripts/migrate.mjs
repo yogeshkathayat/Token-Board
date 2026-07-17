@@ -1,21 +1,32 @@
-/**
- * Idempotent migration runner. Applies every migrations/*.sql in lexical order,
- * tracking applied files in tb_schema_migrations. Safe to run on every startup.
- *
- * Usage: tsx src/lib/db/migrate.ts   (or `npm run migrate`)
- */
-import { readdirSync, readFileSync } from 'node:fs';
+// Plain-Node migration runner (no tsx/TypeScript) so it works inside the Next.js
+// `output: 'standalone'` runner image, whose pruned node_modules keeps `pg` but not tsx.
+// Applies migrations/*.sql in order, tracked in tb_schema_migrations. Idempotent.
+//
+// Resolves the migrations dir from MIGRATIONS_DIR, else ./migrations relative to cwd,
+// else ../migrations relative to this file.
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Pool } from 'pg';
+import pg from 'pg';
 
-const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'migrations');
+function resolveMigrationsDir() {
+  const candidates = [
+    process.env.MIGRATIONS_DIR,
+    join(process.cwd(), 'migrations'),
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations'),
+  ].filter(Boolean);
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+  throw new Error(`migrations dir not found (tried: ${candidates.join(', ')})`);
+}
 
 async function main() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is not set');
-  const pool = new Pool({ connectionString });
+  const dir = resolveMigrationsDir();
+  const pool = new pg.Pool({ connectionString });
 
   try {
     await pool.query(
@@ -25,11 +36,9 @@ async function main() {
        )`,
     );
     const applied = new Set(
-      (await pool.query<{ version: string }>('SELECT version FROM tb_schema_migrations')).rows.map(
-        (r) => r.version,
-      ),
+      (await pool.query('SELECT version FROM tb_schema_migrations')).rows.map((r) => r.version),
     );
-    const files = readdirSync(migrationsDir)
+    const files = readdirSync(dir)
       .filter((f) => f.endsWith('.sql'))
       .sort();
 
@@ -38,7 +47,7 @@ async function main() {
         console.log(`skip  ${file}`);
         continue;
       }
-      const sql = readFileSync(join(migrationsDir, file), 'utf8');
+      const sql = readFileSync(join(dir, file), 'utf8');
       const client = await pool.connect();
       try {
         await client.query('BEGIN');

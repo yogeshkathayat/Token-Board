@@ -1,3 +1,6 @@
+// Auth-guarded: must render per-request so the session guard runs on every request.
+export const dynamic = 'force-dynamic';
+
 import { AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 

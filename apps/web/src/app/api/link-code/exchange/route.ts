@@ -31,37 +31,21 @@ export async function POST(req: NextRequest) {
 
   const { code, device_name, platform, machine_id } = parsed.data;
 
-  const linkCode = await query<{
-    user_id: string;
-    email: string;
-    expires_at: string;
-    consumed_at: string | null;
-  }>(
-    `SELECT user_id, email, expires_at, consumed_at
-     FROM tb_link_codes
-     WHERE code = $1`,
+  // Atomic single-use consume: only one concurrent request can win this UPDATE.
+  const consumed = await query<{ user_id: string; email: string }>(
+    `UPDATE tb_link_codes
+        SET consumed_at = now()
+      WHERE code = $1 AND consumed_at IS NULL AND expires_at > now()
+      RETURNING user_id, email`,
     [code],
   );
 
-  if (linkCode.length === 0) {
-    return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 });
+  if (consumed.length === 0) {
+    return NextResponse.json({ error: 'Invalid, expired, or already-used code' }, { status: 400 });
   }
 
-  const lc = linkCode[0];
-  if (lc.consumed_at) {
-    return NextResponse.json({ error: 'Code already used' }, { status: 400 });
-  }
-
-  if (new Date(lc.expires_at) < new Date()) {
-    return NextResponse.json({ error: 'Code expired' }, { status: 400 });
-  }
-
+  const lc = consumed[0];
   const userId = lc.user_id;
-
-  await query(
-    `UPDATE tb_link_codes SET consumed_at = now() WHERE code = $1`,
-    [code],
-  );
 
   await query(
     `INSERT INTO tb_user_profiles (user_id, email, display_name)

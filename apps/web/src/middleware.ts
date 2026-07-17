@@ -3,8 +3,11 @@ import { NextResponse } from 'next/server';
 
 import { Logger } from '@/lib/logger';
 
-// Auth bypass flag for development/testing
-const isAuthBypassed = process.env.AUTH_BYPASS === 'true';
+// Auth bypass for development. In production, requires AUTH_BYPASS_ALLOW_IN_PROD=true too.
+const isAuthBypassed =
+  process.env.AUTH_BYPASS === 'true' &&
+  (process.env.NODE_ENV !== 'production' ||
+    process.env.AUTH_BYPASS_ALLOW_IN_PROD === 'true');
 
 const logger = new Logger('middleware');
 
@@ -34,7 +37,7 @@ async function hasValidSessionAndAccess(request: NextRequest): Promise<boolean> 
 
     logger.debug({
       message: 'Making session and access check for',
-      metadata: { url: request.nextUrl, cookieHeader: cookieHeader },
+      metadata: { path: request.nextUrl.pathname, hasCookie: Boolean(cookieHeader) },
     });
 
     const authDeskUrl = getAuthDeskUrl();
@@ -116,7 +119,7 @@ export async function middleware(request: NextRequest) {
       // User is authenticated but has no desk access
       logger.debug({
         message: 'User authenticated but no desk access, redirecting to unauthorized',
-        metadata: { session },
+        metadata: { email: session?.user?.email },
       });
       return NextResponse.redirect(new URL('/auth/unauthorized', request.url));
     } else {

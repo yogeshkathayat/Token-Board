@@ -117,6 +117,25 @@ function pendingBytes() {
   return Math.max(0, size - readOffset());
 }
 
+// When the committed offset has caught up to EOF, the queue is fully uploaded — reclaim the
+// file so it doesn't grow without bound over the life of the install. Only compacts when
+// there's nothing pending (offset >= size), so no un-uploaded rows are ever dropped.
+function compactIfDrained() {
+  const { queuePath } = paths();
+  let size = 0;
+  try {
+    size = fs.statSync(queuePath).size;
+  } catch {
+    return false;
+  }
+  if (size > 0 && readOffset() >= size) {
+    fs.writeFileSync(queuePath, '');
+    writeOffset(0);
+    return true;
+  }
+  return false;
+}
+
 module.exports = {
   NUMERIC_FIELDS,
   serializeBucket,
@@ -125,4 +144,5 @@ module.exports = {
   writeOffset,
   readFrom,
   pendingBytes,
+  compactIfDrained,
 };

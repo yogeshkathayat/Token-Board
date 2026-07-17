@@ -3,8 +3,13 @@ import { RolesEnum, Session, User } from '@/types/auth';
 
 const logger = new Logger('lib/auth/shared');
 
-// Auth bypass flag for development/testing
-export const isAuthBypassed = process.env.AUTH_BYPASS === 'true';
+// Auth bypass for development. In production it is IGNORED unless the operator also sets an
+// explicit AUTH_BYPASS_ALLOW_IN_PROD=true acknowledgment — so a stray AUTH_BYPASS=true in a
+// copied .env can never silently disable auth on a real deploy.
+export const isAuthBypassed =
+  process.env.AUTH_BYPASS === 'true' &&
+  (process.env.NODE_ENV !== 'production' ||
+    process.env.AUTH_BYPASS_ALLOW_IN_PROD === 'true');
 
 // Mock session for auth bypass mode
 export const mockSession: Session = {

@@ -2,7 +2,7 @@ import 'server-only';
 
 import { isCompanyEmail } from '@/lib/auth/company';
 import { SOURCES } from '@/lib/contract';
-import { query } from '@/lib/db/client';
+import { pool } from '@/lib/db/client';
 
 interface LeaderboardPeriod {
   period: 'week' | 'month' | 'total';
@@ -57,37 +57,48 @@ export async function refreshLeaderboard(): Promise<RefreshResult> {
   const windows = getPeriodWindows();
   const result: RefreshResult = { week: 0, month: 0, total: 0 };
 
-  for (const { period, fromDay, toDay } of windows) {
-    await query(
-      `DELETE FROM tb_leaderboard_snapshots
-       WHERE period = $1 AND from_day = $2 AND to_day = $3`,
-      [period, fromDay, toDay],
-    );
+  // Whole leaderboard swaps atomically: readers never see a half-deleted snapshot.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-    const buckets = await query<{
-      user_id: string;
-      source: string;
-      total_tokens: string;
-      total_cost_usd: string;
-    }>(
-      `SELECT user_id, source,
-              sum(total_tokens) AS total_tokens,
-              sum(total_cost_usd) AS total_cost_usd
-       FROM tb_usage_buckets
-       WHERE hour_start >= $1::date AND hour_start <= ($2::date + interval '1 day' - interval '1 second')
-       GROUP BY user_id, source`,
-      [fromDay, toDay],
-    );
+    for (const { period, fromDay, toDay } of windows) {
+      await client.query(
+        `DELETE FROM tb_leaderboard_snapshots
+         WHERE period = $1 AND from_day = $2 AND to_day = $3`,
+        [period, fromDay, toDay],
+      );
 
-    const profiles = await query<{
-      user_id: string;
-      email: string;
-      display_name: string | null;
-      avatar_url: string | null;
-      leaderboard_public: boolean;
-    }>(`SELECT user_id, email, display_name, avatar_url, leaderboard_public FROM tb_user_profiles`);
+      const buckets = (
+        await client.query<{
+          user_id: string;
+          source: string;
+          total_tokens: string;
+          total_cost_usd: string;
+        }>(
+          `SELECT user_id, source,
+                  sum(total_tokens) AS total_tokens,
+                  sum(total_cost_usd) AS total_cost_usd
+           FROM tb_usage_buckets
+           WHERE hour_start >= $1::date AND hour_start <= ($2::date + interval '1 day' - interval '1 second')
+           GROUP BY user_id, source`,
+          [fromDay, toDay],
+        )
+      ).rows;
 
-    const profileMap = new Map(profiles.map((p) => [p.user_id, p]));
+      const profiles = (
+        await client.query<{
+          user_id: string;
+          email: string;
+          display_name: string | null;
+          avatar_url: string | null;
+          leaderboard_public: boolean;
+        }>(
+          `SELECT user_id, email, display_name, avatar_url, leaderboard_public FROM tb_user_profiles`,
+        )
+      ).rows;
+
+      const profileMap = new Map(profiles.map((p) => [p.user_id, p]));
 
     const userMap = new Map<
       string,
@@ -133,15 +144,17 @@ export async function refreshLeaderboard(): Promise<RefreshResult> {
       u.estimated_cost_usd += parseFloat(row.total_cost_usd);
     }
 
-    const sorted = Array.from(userMap.values()).sort((a, b) =>
-      a.total_tokens > b.total_tokens ? -1 : a.total_tokens < b.total_tokens ? 1 : 0,
-    );
+    // Deterministic order: total desc, then user_id asc so equal totals rank stably.
+    const sorted = Array.from(userMap.values()).sort((a, b) => {
+      if (a.total_tokens !== b.total_tokens) return a.total_tokens > b.total_tokens ? -1 : 1;
+      return a.user_id < b.user_id ? -1 : a.user_id > b.user_id ? 1 : 0;
+    });
 
     let rank = 0;
     for (const u of sorted) {
       rank++;
       const prof = profileMap.get(u.user_id)!;
-      await query(
+      await client.query(
         `INSERT INTO tb_leaderboard_snapshots (
           user_id, period, from_day, to_day, rank,
           claude_tokens, codex_tokens, cursor_tokens, kiro_tokens, gemini_tokens, opencode_tokens, other_tokens,
@@ -169,7 +182,15 @@ export async function refreshLeaderboard(): Promise<RefreshResult> {
       );
     }
 
-    result[period] = sorted.length;
+      result[period] = sorted.length;
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
 
   return result;

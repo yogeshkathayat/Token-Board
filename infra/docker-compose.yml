@@ -1,12 +1,10 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:16-alpine
     container_name: tokenboard-db
     environment:
       POSTGRES_USER: tokenboard
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: tokenboard
     volumes:
       - tokenboard-pgdata:/var/lib/postgresql/data
@@ -29,14 +27,16 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://tokenboard:${POSTGRES_PASSWORD:-devpw}@db:5432/tokenboard
+      DATABASE_URL: postgres://tokenboard:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/tokenboard
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-mumzworld.com}
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-local-dev-secret-change-me-32bytes-min}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env (openssl rand -base64 32)}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       NEXT_PUBLIC_NEXTAUTH_URL: ${NEXT_PUBLIC_NEXTAUTH_URL:-http://localhost:3000}
-      LEADERBOARD_REFRESH_SECRET: ${LEADERBOARD_REFRESH_SECRET:-local-dev-refresh-secret}
+      LEADERBOARD_REFRESH_SECRET: ${LEADERBOARD_REFRESH_SECRET:?set LEADERBOARD_REFRESH_SECRET in .env}
       LEADERBOARD_REFRESH_DISABLED: ${LEADERBOARD_REFRESH_DISABLED:-false}
-      AUTH_BYPASS: ${AUTH_BYPASS:-true}
+      AUTH_BYPASS: ${AUTH_BYPASS:-false}
+      # Required IN ADDITION to AUTH_BYPASS to enable bypass on a production image (insecure demo).
+      AUTH_BYPASS_ALLOW_IN_PROD: ${AUTH_BYPASS_ALLOW_IN_PROD:-false}
       AUTH_BYPASS_EMAIL: ${AUTH_BYPASS_EMAIL:-dev@mumzworld.com}
       LOGGER_LEVEL: ${LOGGER_LEVEL:-info}
       NODE_ENV: ${NODE_ENV:-production}

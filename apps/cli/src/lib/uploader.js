@@ -87,6 +87,8 @@ async function drainQueueToCloud({ config, force = false, nowMs = Date.now() } =
   }
 
   queue.writeOffset(endOffset);
+  // Fully drained -> reclaim the append-only file so it can't grow without bound.
+  queue.compactIfDrained();
   throttle.saveState(throttle.recordUploadSuccess({ nowMs, state }));
   return { uploaded, reason: 'ok' };
 }

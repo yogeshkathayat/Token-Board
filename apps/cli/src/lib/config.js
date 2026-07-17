@@ -39,7 +39,8 @@ function writeConfig(config) {
   for (const k of CONFIG_KEYS) {
     if (config[k] !== undefined) next[k] = config[k];
   }
-  fs.writeFileSync(configPath, JSON.stringify(next, null, 2) + '\n');
+  // mode on create avoids a world-readable window; chmod re-tightens an existing file.
+  fs.writeFileSync(configPath, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
   try {
     fs.chmodSync(configPath, 0o600);
   } catch {
