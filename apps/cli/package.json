@@ -1,0 +1,23 @@
+{
+  "name": "tokenboard-cli",
+  "version": "0.1.0",
+  "description": "TokenBoard CLI — collects local AI token-usage counts and uploads half-hour buckets.",
+  "type": "commonjs",
+  "bin": {
+    "tokenboard": "bin/tokenboard.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "typecheck": "true"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.0.0"
+  },
+  "files": [
+    "bin",
+    "src"
+  ]
+}

@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: tokenboard-db
+    environment:
+      POSTGRES_USER: tokenboard
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpw}
+      POSTGRES_DB: tokenboard
+    volumes:
+      - tokenboard-pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tokenboard"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - tokenboard
+
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: ../../infra/Dockerfile
+    container_name: tokenboard-web
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://tokenboard:${POSTGRES_PASSWORD:-devpw}@db:5432/tokenboard
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-mumzworld.com}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-local-dev-secret-change-me-32bytes-min}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXT_PUBLIC_NEXTAUTH_URL: ${NEXT_PUBLIC_NEXTAUTH_URL:-http://localhost:3000}
+      LEADERBOARD_REFRESH_SECRET: ${LEADERBOARD_REFRESH_SECRET:-local-dev-refresh-secret}
+      LEADERBOARD_REFRESH_DISABLED: ${LEADERBOARD_REFRESH_DISABLED:-false}
+      AUTH_BYPASS: ${AUTH_BYPASS:-true}
+      AUTH_BYPASS_EMAIL: ${AUTH_BYPASS_EMAIL:-dev@mumzworld.com}
+      LOGGER_LEVEL: ${LOGGER_LEVEL:-info}
+      NODE_ENV: ${NODE_ENV:-production}
+      DESK_SLUG: ${DESK_SLUG:-tokenboard}
+      NEXT_PUBLIC_DESK_SLUG: ${NEXT_PUBLIC_DESK_SLUG:-tokenboard}
+      DESK_NAME: ${DESK_NAME:-TokenBoard}
+      NEXT_PUBLIC_DESK_NAME: ${NEXT_PUBLIC_DESK_NAME:-TokenBoard}
+    ports:
+      - "3000:3000"
+    networks:
+      - tokenboard
+    restart: unless-stopped
+
+volumes:
+  tokenboard-pgdata:
+    name: tokenboard-pgdata
+
+networks:
+  tokenboard:
+    name: tokenboard
