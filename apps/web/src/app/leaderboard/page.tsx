@@ -20,7 +20,7 @@ export default async function LeaderboardPage() {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Access Required</AlertTitle>
           <AlertDescription>
-            Please sign in with your company email address (@mumzworld.com) to access the leaderboard.
+            Please sign in with an allowed company email address to access the leaderboard.
           </AlertDescription>
         </Alert>
         <Button asChild>

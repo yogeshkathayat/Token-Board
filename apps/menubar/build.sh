@@ -24,8 +24,8 @@ ACTION="${1:-build}"
 
 PRODUCT="TokenBoard"
 APP_NAME="TokenBoard.app"
-BUNDLE_ID="com.mumzworld.tokenboard.bar"
-LAUNCHD_LABEL="com.mumzworld.tokenboard.bar"
+BUNDLE_ID="com.tokenboard.bar"
+LAUNCHD_LABEL="com.tokenboard.bar"
 
 BUILD_DIR="$DIR/.build"
 APP_BUNDLE="$BUILD_DIR/$APP_NAME"
@@ -36,8 +36,27 @@ INSTALLED_APP="$INSTALL_DIR/$APP_NAME"
 PLIST_PATH="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
 LOG_PATH="$HOME/Library/Logs/TokenBoardBar.log"
 
+# Render logomark.svg into an AppIcon.icns via Quick Look + iconutil (macOS built-ins).
+# Best-effort: if either tool is missing, the app just uses the default icon.
+make_app_icon() {
+  local out="$1"
+  command -v qlmanage >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1 || return 1
+  local base iconset p sz name tmp
+  base="$(mktemp -d)"; iconset="$base/AppIcon.iconset"; mkdir -p "$iconset"
+  for p in 16:icon_16x16.png 32:icon_16x16@2x.png 32:icon_32x32.png 64:icon_32x32@2x.png \
+           128:icon_128x128.png 256:icon_128x128@2x.png 256:icon_256x256.png \
+           512:icon_256x256@2x.png 512:icon_512x512.png 1024:icon_512x512@2x.png; do
+    sz="${p%%:*}"; name="${p##*:}"; tmp="$(mktemp -d)"
+    qlmanage -t -s "$sz" -o "$tmp" "$DIR/Resources/logomark.svg" >/dev/null 2>&1 || true
+    [ -f "$tmp/logomark.svg.png" ] && cp "$tmp/logomark.svg.png" "$iconset/$name"
+    rm -rf "$tmp"
+  done
+  iconutil -c icns "$iconset" -o "$out" >/dev/null 2>&1 || { rm -rf "$base"; return 1; }
+  rm -rf "$base"; [ -f "$out" ]
+}
+
 build() {
-  mkdir -p "$APP_BUNDLE/Contents/MacOS"
+  mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 
   echo "-> swiftc -O Sources/*.swift"
   swiftc -O \
@@ -46,6 +65,14 @@ build() {
     Sources/*.swift
 
   cp "$DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+  # Menu-bar status icon (loaded as a template image at runtime).
+  cp "$DIR/Resources/logomark-mono.svg" "$APP_BUNDLE/Contents/Resources/" 2>/dev/null || true
+  # App icon (Finder / Dock / About).
+  if make_app_icon "$APP_BUNDLE/Contents/Resources/AppIcon.icns"; then
+    echo "-> app icon generated"
+  else
+    echo "-> app icon skipped (qlmanage/iconutil unavailable)"
+  fi
   # Ad-hoc sign so the binary keeps a stable code identity across relaunches
   # within the same build (not across rebuilds — see the token-storage note
   # in Sources/ConfigStore.swift for why we don't rely on that for Keychain).

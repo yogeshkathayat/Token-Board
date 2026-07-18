@@ -18,7 +18,7 @@ struct SettingsView: View {
                 Text("Server URL")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                TextField("https://tokenboard.mumzworld.com", text: $baseURL)
+                TextField("https://tokenboard.example.com", text: $baseURL)
                     .textFieldStyle(.roundedBorder)
             }
 

@@ -28,7 +28,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://tokenboard:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/tokenboard
-      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-mumzworld.com}
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env (openssl rand -base64 32)}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       NEXT_PUBLIC_NEXTAUTH_URL: ${NEXT_PUBLIC_NEXTAUTH_URL:-http://localhost:3000}
@@ -37,7 +37,7 @@ services:
       AUTH_BYPASS: ${AUTH_BYPASS:-false}
       # Required IN ADDITION to AUTH_BYPASS to enable bypass on a production image (insecure demo).
       AUTH_BYPASS_ALLOW_IN_PROD: ${AUTH_BYPASS_ALLOW_IN_PROD:-false}
-      AUTH_BYPASS_EMAIL: ${AUTH_BYPASS_EMAIL:-dev@mumzworld.com}
+      AUTH_BYPASS_EMAIL: ${AUTH_BYPASS_EMAIL:-dev@example.com}
       LOGGER_LEVEL: ${LOGGER_LEVEL:-info}
       NODE_ENV: ${NODE_ENV:-production}
       DESK_SLUG: ${DESK_SLUG:-tokenboard}

@@ -15,7 +15,7 @@ export const isAuthBypassed =
 export const mockSession: Session = {
   user: {
     id: 'dev-user',
-    email: process.env.AUTH_BYPASS_EMAIL || 'dev@mumzworld.com',
+    email: process.env.AUTH_BYPASS_EMAIL || 'dev@example.com',
     name: 'Dev User',
     image: 'https://github.com/shadcn.png',
     role: 'admin',

@@ -102,12 +102,13 @@ export function AppSidebar({ user }: AppSidebarProps) {
                   tooltip={deskName}
                   className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground group-data-[collapsible=icon]:mx-auto"
                 >
-                  <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                    <DeskIcon name={currentDeskIcon} fallback={deskName} className="size-4" />
+                  <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/10">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/logomark.svg" alt="TokenBoard" className="size-5" />
                   </div>
                   <div className="grid flex-1 text-left text-sm leading-tight">
                     <span className="truncate font-semibold">{deskName}</span>
-                    <span className="truncate text-xs text-muted-foreground">Management</span>
+                    <span className="truncate text-xs text-muted-foreground">Usage &amp; leaderboard</span>
                   </div>
                   <ChevronsUpDown className="ml-auto" />
                 </SidebarMenuButton>

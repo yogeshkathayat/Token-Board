@@ -8,7 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const LABEL = 'com.mumzworld.tokenboard.sync';
+const LABEL = 'com.tokenboard.sync';
 const INTERVAL = 300;
 
 function binPath() {

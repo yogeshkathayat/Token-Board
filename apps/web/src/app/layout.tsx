@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'TokenBoard',
-  description: 'Company-local AI token-usage tracker for Mumzworld',
+  description: 'Self-hosted AI token-usage tracker and leaderboard',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

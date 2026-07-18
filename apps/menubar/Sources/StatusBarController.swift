@@ -8,10 +8,27 @@ final class StatusBarController: NSObject {
     private var latestErrorText: String?
     private var settingsWindowController: SettingsWindowController?
 
+    // The TokenBoard logomark, as a template image so it adapts to the menu-bar appearance.
+    private lazy var logoImage: NSImage? = Self.loadLogo()
+
+    private static func loadLogo() -> NSImage? {
+        guard let url = Bundle.main.url(forResource: "logomark-mono", withExtension: "svg"),
+              let img = NSImage(contentsOf: url) else { return nil }
+        img.isTemplate = true
+        img.size = NSSize(width: 15, height: 15)
+        return img
+    }
+
+    private func applyLogo(to button: NSButton) {
+        button.image = logoImage
+        button.imagePosition = logoImage != nil ? .imageLeading : .noImage
+    }
+
     override init() {
         super.init()
         if let button = statusItem.button {
-            button.title = "TB —"
+            applyLogo(to: button)
+            button.title = logoImage != nil ? " —" : "TB —"
         }
         statusItem.menu = buildMenu()
 
@@ -44,10 +61,12 @@ final class StatusBarController: NSObject {
 
     private func updateStatusTitle() {
         guard let button = statusItem.button else { return }
+        applyLogo(to: button)
+        let prefix = logoImage != nil ? " " : "TB "
         if let summary = latestSummary {
-            button.title = "TB \(TokenFormat.compact(summary.todayTokens))"
+            button.title = "\(prefix)\(TokenFormat.compact(summary.todayTokens))"
         } else {
-            button.title = "TB —"
+            button.title = "\(prefix)—"
         }
     }
 

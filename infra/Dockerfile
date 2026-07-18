@@ -38,6 +38,8 @@ RUN addgroup --system --gid 1001 nodejs && \
 # NOT copy the full builder node_modules (keeps the image slim and prod-only).
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+# Static assets (logo, favicon, etc.) — standalone output does NOT include public/.
+COPY --from=builder /app/public ./public
 
 # Migrations + the plain-Node migrate runner (no tsx at runtime).
 COPY --from=builder /app/migrations ./migrations

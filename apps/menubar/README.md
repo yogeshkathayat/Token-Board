@@ -55,7 +55,7 @@ sudo mv /Library/Developer/CommandLineTools/usr/include/swift/module.modulemap{,
 ```
 
 This compiles `TokenBoard.app`, copies it to `~/Applications/`, writes a
-LaunchAgent plist at `~/Library/LaunchAgents/com.mumzworld.tokenboard.bar.plist`,
+LaunchAgent plist at `~/Library/LaunchAgents/com.tokenboard.bar.plist`,
 and registers it with `launchctl bootstrap gui/$UID` (the modern API —
 `launchctl load`/`unload` is deprecated and doesn't bind to the GUI session
 correctly on macOS 13+, which makes the `NSStatusItem` invisible even though
@@ -65,7 +65,7 @@ the process is running).
 ./build.sh uninstall
 ```
 
-Runs `launchctl bootout gui/$UID/com.mumzworld.tokenboard.bar` and removes
+Runs `launchctl bootout gui/$UID/com.tokenboard.bar` and removes
 the installed app + plist.
 
 Logs: `~/Library/Logs/TokenBoardBar.log`

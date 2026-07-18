@@ -20,7 +20,7 @@ export default async function DashboardPage() {
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Access Required</AlertTitle>
           <AlertDescription>
-            Please sign in with your company email address (@mumzworld.com) to access TokenBoard.
+            Please sign in with an allowed company email address to access TokenBoard.
           </AlertDescription>
         </Alert>
         <Button asChild>
