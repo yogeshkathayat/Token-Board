@@ -14,6 +14,8 @@ Commands:
                   (--link-code <CODE> [--base-url <url>])
   sync            Parse local tool logs and upload usage buckets
                   (--drain to only upload, --force to bypass throttle)
+  autosync        Manage the 5-min background sync agent
+                  (autosync install | uninstall | status)
   status          Show config, pending queue size, and last sync
   config          Get/set config values (config get [key] | config set <key> <value>)
 
@@ -37,6 +39,7 @@ const COMMANDS = {
   init: () => require('./commands/init'),
   'device-login': () => require('./commands/device-login'),
   sync: () => require('./commands/sync'),
+  autosync: () => require('./commands/autosync'),
   status: () => require('./commands/status'),
   config: () => require('./commands/config'),
 };

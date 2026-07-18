@@ -86,7 +86,15 @@ async function run(argv) {
       return 0;
     }
 
-    const drainResult = await drainQueueToCloud({ config, force: args.force || args.drain });
+    // Upload is best-effort: a transient failure (offline, server down) is NEVER fatal — the
+    // queue persists on disk and the next run retries. This keeps the 5-min auto-sync quiet.
+    let drainResult;
+    try {
+      drainResult = await drainQueueToCloud({ config, force: args.force || args.drain });
+    } catch (e) {
+      out.write(`Upload deferred (will retry): ${(e && e.message) || e}\n`);
+      return 0;
+    }
     if (drainResult.reason === 'ok') {
       out.write(`Uploaded ${drainResult.uploaded} bucket(s).\n`);
     } else if (drainResult.reason === 'throttled') {
@@ -94,8 +102,7 @@ async function run(argv) {
     } else if (drainResult.reason === 'no-pending') {
       out.write('Nothing to upload.\n');
     } else if (drainResult.reason === 'error') {
-      out.write(`Upload failed: ${drainResult.error}\n`);
-      return 1;
+      out.write(`Upload deferred (will retry): ${drainResult.error}\n`);
     } else {
       out.write(`Upload skipped (${drainResult.reason}).\n`);
     }
