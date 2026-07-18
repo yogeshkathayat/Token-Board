@@ -1,10 +1,12 @@
 # Multi-stage build for @tokenboard/web Next.js app
 # Build context: apps/web
 
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+# Pin pnpm: without this corepack fetches the latest (pnpm 11.x), which needs a newer
+# node:sqlite builtin and crashes. 9.5.0 matches the lockfile.
+RUN corepack enable && corepack prepare pnpm@9.5.0 --activate
 
 # ---- Dependencies stage ----
 FROM base AS deps
@@ -21,7 +23,7 @@ COPY . .
 RUN pnpm build
 
 # ---- Runner stage ----
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

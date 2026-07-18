@@ -11,23 +11,25 @@ declare global {
   var __tokenboardPool: Pool | undefined;
 }
 
-function makePool(): Pool {
+/**
+ * Lazily create the pool. DATABASE_URL is only required when a query actually runs — NOT at
+ * import time — so `next build` can evaluate route modules without a live database.
+ */
+export function getPool(): Pool {
+  if (global.__tokenboardPool) return global.__tokenboardPool;
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error('DATABASE_URL is not set');
   }
-  return new Pool({ connectionString, max: 10 });
-}
-
-export const pool: Pool = global.__tokenboardPool ?? makePool();
-if (process.env.NODE_ENV !== 'production') {
+  const pool = new Pool({ connectionString, max: 10 });
   global.__tokenboardPool = pool;
+  return pool;
 }
 
 export async function query<T = Record<string, unknown>>(
   text: string,
   params?: unknown[],
 ): Promise<T[]> {
-  const res = await pool.query(text, params as never[]);
+  const res = await getPool().query(text, params as never[]);
   return res.rows as T[];
 }

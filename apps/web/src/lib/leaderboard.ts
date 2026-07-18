@@ -2,7 +2,7 @@ import 'server-only';
 
 import { isCompanyEmail } from '@/lib/auth/company';
 import { SOURCES } from '@/lib/contract';
-import { pool } from '@/lib/db/client';
+import { getPool } from '@/lib/db/client';
 
 interface LeaderboardPeriod {
   period: 'week' | 'month' | 'total';
@@ -58,7 +58,7 @@ export async function refreshLeaderboard(): Promise<RefreshResult> {
   const result: RefreshResult = { week: 0, month: 0, total: 0 };
 
   // Whole leaderboard swaps atomically: readers never see a half-deleted snapshot.
-  const client = await pool.connect();
+  const client = await getPool().connect();
   try {
     await client.query('BEGIN');
 
