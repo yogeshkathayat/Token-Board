@@ -13,7 +13,8 @@ const TokenTotalsSchema = z.object({
   output_tokens: z.number().int().min(0),
   reasoning_output_tokens: z.number().int().min(0),
   total_tokens: z.number().int().min(0),
-  billable_total_tokens: z.number().int().min(0),
+  // Optional: older CLI builds didn't emit it. Defaults to total_tokens at insert time.
+  billable_total_tokens: z.number().int().min(0).optional(),
 });
 
 const UsageBucketSchema = TokenTotalsSchema.extend({
@@ -61,7 +62,8 @@ export async function POST(req: NextRequest) {
   // and writing email=userId would poison the company-membership check).
 
   for (const bucket of buckets) {
-    const costUsd = estimateCostUsd(bucket.model, bucket);
+    const billable = bucket.billable_total_tokens ?? bucket.total_tokens;
+    const costUsd = estimateCostUsd(bucket.model, { ...bucket, billable_total_tokens: billable });
 
     await query(
       `INSERT INTO tb_usage_buckets (
@@ -93,7 +95,7 @@ export async function POST(req: NextRequest) {
         bucket.output_tokens,
         bucket.reasoning_output_tokens,
         bucket.total_tokens,
-        bucket.billable_total_tokens,
+        billable,
         costUsd,
         bucket.conversation_count,
       ],
