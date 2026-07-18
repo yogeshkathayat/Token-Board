@@ -7,6 +7,7 @@ const { loadCursors, saveCursors } = require('../lib/cursors');
 const { appendBucket, pendingBytes } = require('../lib/queue');
 const { runAll } = require('../parsers');
 const { drainQueueToCloud } = require('../lib/uploader');
+const { writeLocalSummary } = require('../lib/summary');
 
 const LOCK_STALE_MS = 15 * 60_000;
 
@@ -70,6 +71,13 @@ async function run(argv) {
       });
       saveCursors(cursors);
       out.write(`Parsed ${result.parsersRun} tool(s); queued ${result.bucketsQueued} bucket(s).\n`);
+    }
+
+    // Refresh the local summary the menu-bar app reads (independent of upload / pairing).
+    try {
+      writeLocalSummary();
+    } catch {
+      /* non-fatal: the menu bar just shows stale/absent data */
     }
 
     if (!isPaired(config)) {

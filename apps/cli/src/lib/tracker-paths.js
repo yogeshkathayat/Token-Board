@@ -30,6 +30,7 @@ function paths() {
     queueStatePath: path.join(root, 'queue.state.json'),
     throttlePath: path.join(root, 'upload.throttle.json'),
     lockPath: path.join(root, 'sync.lock'),
+    summaryPath: path.join(root, 'summary.json'),
   };
 }
 

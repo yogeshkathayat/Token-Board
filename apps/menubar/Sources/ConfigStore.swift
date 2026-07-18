@@ -29,6 +29,21 @@ enum ConfigStore {
             .appendingPathComponent(".tokenboard/config.json")
     }
 
+    /// The local usage summary written by `tokenboard sync` (CLI location wins; the app's own
+    /// support dir is a fallback). This is the sole data source for the menu bar — no network,
+    /// no auth. The dashboard/leaderboard remain server-backed.
+    private static var cliSummaryPath: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".tokenboard/summary.json")
+    }
+    private static var localSummaryPath: URL { appSupportDir.appendingPathComponent("summary.json") }
+
+    static func readSummaryData() -> Data? {
+        if let d = try? Data(contentsOf: cliSummaryPath) { return d }
+        if let d = try? Data(contentsOf: localSummaryPath) { return d }
+        return nil
+    }
+
     private struct LocalConfig: Codable {
         var baseUrl: String?
     }

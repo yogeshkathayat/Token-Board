@@ -33,15 +33,10 @@ final class StatusBarController: NSObject {
             latestErrorText = nil
         } catch let error as APIError {
             latestSummary = nil
-            switch error {
-            case .notConfigured, .http(401), .http(403):
-                latestErrorText = "Not connected"
-            default:
-                latestErrorText = error.errorDescription ?? "Unreachable"
-            }
+            latestErrorText = error.errorDescription ?? "No local data"
         } catch {
             latestSummary = nil
-            latestErrorText = "Unreachable"
+            latestErrorText = "No local data"
         }
         updateStatusTitle()
         statusItem.menu = buildMenu()
