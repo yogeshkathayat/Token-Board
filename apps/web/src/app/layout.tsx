@@ -8,8 +8,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: process.env.DESK_NAME || process.env.NEXT_PUBLIC_DESK_NAME || 'Starter Kit',
-  description: 'Desk starter kit for the Mumzworld Auth Desk ecosystem',
+  title: 'TokenBoard',
+  description: 'Company-local AI token-usage tracker for Mumzworld',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
