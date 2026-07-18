@@ -249,3 +249,19 @@
 .dark .glass {
   background: oklch(0.145 0 0 / 60%);
 }
+
+/* Heatmap cell transitions */
+@keyframes heatmap-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.9;
+  }
+}
+
+.heatmap-cell-active {
+  animation: heatmap-pulse 0.3s ease-in-out;
+}

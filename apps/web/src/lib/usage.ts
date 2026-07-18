@@ -107,3 +107,35 @@ export async function getUsageSummary(userId: string, tz?: string): Promise<Usag
     last30,
   };
 }
+
+export interface UsageHeatmap {
+  tz: string;
+  days: Array<{ day: string; total_tokens: string }>;
+}
+
+/** Zero-filled per-day totals for the last `days` local days (for a calendar heatmap). */
+export async function getUsageHeatmap(
+  userId: string,
+  tz?: string,
+  days = 112,
+): Promise<UsageHeatmap> {
+  const zone = safeTz(tz);
+  const n = Math.min(Math.max(Math.floor(days) || 0, 1), 400);
+  const dayStart = `date_trunc('day', now() AT TIME ZONE '${zone}')`;
+  const rows = await query<{ day: string; total_tokens: string }>(
+    `WITH days AS (
+        SELECT generate_series(${dayStart} - interval '${n - 1} days', ${dayStart}, interval '1 day') AS d
+     ), agg AS (
+        SELECT date_trunc('day', hour_start AT TIME ZONE '${zone}') AS d, sum(total_tokens) AS t
+          FROM tb_usage_buckets
+         WHERE user_id = $1
+           AND hour_start >= (${dayStart} - interval '${n - 1} days') AT TIME ZONE '${zone}'
+         GROUP BY 1
+     )
+     SELECT to_char(days.d, 'YYYY-MM-DD') AS day, COALESCE(agg.t, 0)::text AS total_tokens
+       FROM days LEFT JOIN agg ON agg.d = days.d
+      ORDER BY days.d ASC`,
+    [userId],
+  );
+  return { tz: zone, days: rows };
+}

@@ -6,6 +6,7 @@ import { Award, Medal, Trophy } from 'lucide-react';
 import { useState } from 'react';
 import useSWR from 'swr';
 
+import { SourceIcon } from '@/components/source-icon';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table/data-table';
@@ -122,13 +123,15 @@ export function LeaderboardClient() {
         const entry = row.original;
         return (
           <div className="flex items-center gap-3">
-            <Avatar className="h-8 w-8">
+            <Avatar className="h-9 w-9 border-2 border-background ring-1 ring-border">
               {entry.avatar_url && <AvatarImage src={entry.avatar_url} alt={entry.display_name} />}
-              <AvatarFallback>{getInitials(entry.display_name)}</AvatarFallback>
+              <AvatarFallback className="text-xs">{getInitials(entry.display_name)}</AvatarFallback>
             </Avatar>
             <span className="font-medium">{entry.display_name}</span>
             {entry.is_me && (
-              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">You</span>
+              <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary border border-primary/20">
+                You
+              </span>
             )}
           </div>
         );
@@ -136,51 +139,89 @@ export function LeaderboardClient() {
     },
     {
       accessorKey: 'claude_tokens',
-      header: 'Claude',
+      header: () => (
+        <div className="flex items-center justify-end gap-1.5">
+          <SourceIcon source="claude" className="text-muted-foreground" />
+          <span>Claude</span>
+        </div>
+      ),
       size: 100,
-      cell: ({ row }) => <div className="text-right">{formatTokens(row.original.claude_tokens)}</div>,
+      cell: ({ row }) => <div className="text-right font-mono text-sm">{formatTokens(row.original.claude_tokens)}</div>,
     },
     {
       accessorKey: 'cursor_tokens',
-      header: 'Cursor',
+      header: () => (
+        <div className="flex items-center justify-end gap-1.5">
+          <SourceIcon source="cursor" className="text-muted-foreground" />
+          <span>Cursor</span>
+        </div>
+      ),
       size: 100,
-      cell: ({ row }) => <div className="text-right">{formatTokens(row.original.cursor_tokens)}</div>,
+      cell: ({ row }) => <div className="text-right font-mono text-sm">{formatTokens(row.original.cursor_tokens)}</div>,
     },
     {
       accessorKey: 'codex_tokens',
-      header: 'Codex',
+      header: () => (
+        <div className="flex items-center justify-end gap-1.5">
+          <SourceIcon source="codex" className="text-muted-foreground" />
+          <span>Codex</span>
+        </div>
+      ),
       size: 100,
-      cell: ({ row }) => <div className="text-right">{formatTokens(row.original.codex_tokens)}</div>,
+      cell: ({ row }) => <div className="text-right font-mono text-sm">{formatTokens(row.original.codex_tokens)}</div>,
     },
     {
       accessorKey: 'gemini_tokens',
-      header: 'Gemini',
+      header: () => (
+        <div className="flex items-center justify-end gap-1.5">
+          <SourceIcon source="gemini" className="text-muted-foreground" />
+          <span>Gemini</span>
+        </div>
+      ),
       size: 100,
-      cell: ({ row }) => <div className="text-right">{formatTokens(row.original.gemini_tokens)}</div>,
+      cell: ({ row }) => <div className="text-right font-mono text-sm">{formatTokens(row.original.gemini_tokens)}</div>,
     },
     {
       accessorKey: 'kiro_tokens',
-      header: 'Kiro',
+      header: () => (
+        <div className="flex items-center justify-end gap-1.5">
+          <SourceIcon source="kiro" className="text-muted-foreground" />
+          <span>Kiro</span>
+        </div>
+      ),
       size: 100,
-      cell: ({ row }) => <div className="text-right">{formatTokens(row.original.kiro_tokens)}</div>,
+      cell: ({ row }) => <div className="text-right font-mono text-sm">{formatTokens(row.original.kiro_tokens)}</div>,
     },
     {
       accessorKey: 'opencode_tokens',
-      header: 'OpenCode',
+      header: () => (
+        <div className="flex items-center justify-end gap-1.5">
+          <SourceIcon source="opencode" className="text-muted-foreground" />
+          <span>OpenCode</span>
+        </div>
+      ),
       size: 100,
-      cell: ({ row }) => <div className="text-right">{formatTokens(row.original.opencode_tokens)}</div>,
+      cell: ({ row }) => <div className="text-right font-mono text-sm">{formatTokens(row.original.opencode_tokens)}</div>,
     },
     {
       accessorKey: 'total_tokens',
-      header: 'Total',
+      header: () => <div className="text-right">Total</div>,
       size: 120,
-      cell: ({ row }) => <div className="text-right font-semibold">{formatTokens(row.original.total_tokens)}</div>,
+      cell: ({ row }) => (
+        <div className="text-right font-bold text-base font-mono bg-primary/5 px-2 py-1 rounded">
+          {formatTokens(row.original.total_tokens)}
+        </div>
+      ),
     },
     {
       accessorKey: 'estimated_cost_usd',
-      header: 'Est. Cost',
+      header: () => <div className="text-right">Est. Cost</div>,
       size: 100,
-      cell: ({ row }) => <div className="text-right text-muted-foreground">{formatCost(row.original.estimated_cost_usd)}</div>,
+      cell: ({ row }) => (
+        <div className="text-right text-muted-foreground font-mono text-sm">
+          {formatCost(row.original.estimated_cost_usd)}
+        </div>
+      ),
     },
   ];
 
@@ -199,35 +240,50 @@ export function LeaderboardClient() {
     : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Leaderboard</h1>
           <p className="text-muted-foreground">
             Company-wide token usage rankings
-            {updatedAgo && <span className="ml-2 text-xs">Updated {updatedAgo}</span>}
+            {updatedAgo && (
+              <span className="ml-2 text-xs px-2 py-0.5 bg-muted rounded-full">
+                Updated {updatedAgo}
+              </span>
+            )}
           </p>
         </div>
 
         <Tabs value={period} onValueChange={(v) => setPeriod(v as Period)}>
-          <TabsList>
-            <TabsTrigger value="week">Week</TabsTrigger>
-            <TabsTrigger value="month">Month</TabsTrigger>
-            <TabsTrigger value="total">All Time</TabsTrigger>
+          <TabsList className="bg-muted/50">
+            <TabsTrigger value="week" className="data-[state=active]:bg-background">
+              Week
+            </TabsTrigger>
+            <TabsTrigger value="month" className="data-[state=active]:bg-background">
+              Month
+            </TabsTrigger>
+            <TabsTrigger value="total" className="data-[state=active]:bg-background">
+              All Time
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{PERIOD_LABELS[period]}</CardTitle>
+      <Card className="border-2">
+        <CardHeader className="bg-gradient-to-r from-muted/50 to-transparent border-b">
+          <CardTitle className="flex items-center gap-2">
+            {period === 'week' && '📅'}
+            {period === 'month' && '📆'}
+            {period === 'total' && '🏆'}
+            {PERIOD_LABELS[period]}
+          </CardTitle>
           <CardDescription>
             {data?.from_day && data?.to_day
-              ? `${new Date(data.from_day).toLocaleDateString()} - ${new Date(data.to_day).toLocaleDateString()}`
+              ? `${new Date(data.from_day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - ${new Date(data.to_day).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
               : 'Loading period...'}
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           <DataTable
             columns={columns}
             data={data?.entries || []}
