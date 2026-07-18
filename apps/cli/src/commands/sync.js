@@ -1,85 +1,115 @@
 'use strict';
 
-const { loadConfig } = require('../lib/config.js');
-const { request } = require('../lib/http.js');
-const queue = require('../lib/queue.js');
-const throttle = require('../lib/throttle.js');
-const { runAll } = require('../parsers/index.js');
+const fs = require('node:fs');
+const { paths } = require('../lib/tracker-paths');
+const { readConfig, isPaired } = require('../lib/config');
+const { loadCursors, saveCursors } = require('../lib/cursors');
+const { appendBucket, pendingBytes } = require('../lib/queue');
+const { runAll } = require('../parsers');
+const { drainQueueToCloud } = require('../lib/uploader');
+const { writeLocalSummary } = require('../lib/summary');
 
-const MAX_BATCHES = 4;
+const LOCK_STALE_MS = 15 * 60_000;
 
-function hasFlag(argv, name) {
-  return argv.includes(name);
+function acquireLock() {
+  const { root, lockPath } = paths();
+  fs.mkdirSync(root, { recursive: true });
+  try {
+    fs.writeFileSync(lockPath, String(process.pid), { flag: 'wx' });
+    return true;
+  } catch (e) {
+    if (!e || e.code !== 'EEXIST') throw e;
+  }
+  // Steal a stale lock.
+  try {
+    const st = fs.statSync(lockPath);
+    if (Date.now() - st.mtimeMs > LOCK_STALE_MS) {
+      fs.writeFileSync(lockPath, String(process.pid));
+      return true;
+    }
+  } catch {
+    /* raced away — treat as held */
+  }
+  return false;
+}
+
+function releaseLock() {
+  const { lockPath } = paths();
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    /* ignore */
+  }
+}
+
+function parseArgs(argv) {
+  const out = { drain: false, force: false };
+  for (const a of argv) {
+    if (a === '--drain') out.drain = true;
+    else if (a === '--force') out.force = true;
+  }
+  return out;
 }
 
 async function run(argv) {
-  const cfg = loadConfig();
-  const quiet = hasFlag(argv, '--quiet');
-  const force = hasFlag(argv, '--force') || hasFlag(argv, '--drain');
+  const args = parseArgs(argv);
+  const out = process.stdout;
+  const config = readConfig();
 
-  const log = quiet ? () => {} : (msg) => process.stdout.write(msg + '\n');
-
-  if (!cfg.device_token || !cfg.base_url) {
-    log('No device token. Run `tokenboard init` first.');
-    process.exit(2);
+  if (!acquireLock()) {
+    out.write('Another sync is in progress; skipping.\n');
+    return 0;
   }
 
-  if (!force && !throttle.shouldAutoSync()) {
-    log('Throttled — next sync allowed later. Pass --force to override.');
-    return;
-  }
-
-  // 1) Parse all sources, append to queue.
-  const { buckets, summary } = await runAll();
-  if (buckets.length > 0) queue.appendBuckets(buckets);
-  if (process.env.TOKENBOARD_DEBUG) {
-    process.stderr.write(`[parse] ${JSON.stringify(summary)}\n`);
-  }
-
-  // 2) Drain queue to backend, in batches.
-  let totalInserted = 0;
-  let totalSkipped = 0;
-  for (let i = 0; i < MAX_BATCHES; i += 1) {
-    const { rows, nextOffset, rawCount } = queue.nextBatch();
-    if (rawCount === 0) break;
-    if (rows.length === 0) {
-      queue.commitOffset(nextOffset);
-      continue;
-    }
-    try {
-      const resp = await request({
-        baseUrl: cfg.base_url,
-        path: '/api/v1/ingest',
-        method: 'POST',
-        token: cfg.device_token,
-        body: { hourly: rows },
-      });
-      totalInserted += resp?.inserted ?? 0;
-      totalSkipped += resp?.skipped ?? 0;
-      queue.commitOffset(nextOffset);
-    } catch (err) {
-      throttle.recordFailure(err.message);
-      log(`Upload failed: ${err.message}`);
-      process.exit(1);
-    }
-  }
-
-  throttle.recordSuccess();
-
-  // 3) Sync ping (heartbeat) so the server can distinguish "no usage" from
-  // "not synced".
   try {
-    await request({
-      baseUrl: cfg.base_url,
-      path: '/api/v1/sync-ping',
-      method: 'POST',
-      token: cfg.device_token,
-    });
-  } catch {
-    /* non-fatal */
-  }
+    if (!args.drain) {
+      const cursors = loadCursors();
+      const result = await runAll({
+        cursors,
+        config,
+        enqueue: (row) => appendBucket(row),
+      });
+      saveCursors(cursors);
+      out.write(`Parsed ${result.parsersRun} tool(s); queued ${result.bucketsQueued} bucket(s).\n`);
+    }
 
-  log(`✓ Sync complete. Inserted ${totalInserted}, skipped ${totalSkipped}.`);
+    // Refresh the local summary the menu-bar app reads (independent of upload / pairing).
+    try {
+      writeLocalSummary();
+    } catch {
+      /* non-fatal: the menu bar just shows stale/absent data */
+    }
+
+    if (!isPaired(config)) {
+      out.write('Not paired — run `tokenboard init --link-code <CODE>` to upload.\n');
+      out.write(`Pending queue: ${pendingBytes()} bytes.\n`);
+      return 0;
+    }
+
+    // Upload is best-effort: a transient failure (offline, server down) is NEVER fatal — the
+    // queue persists on disk and the next run retries. This keeps the 5-min auto-sync quiet.
+    let drainResult;
+    try {
+      drainResult = await drainQueueToCloud({ config, force: args.force || args.drain });
+    } catch (e) {
+      out.write(`Upload deferred (will retry): ${(e && e.message) || e}\n`);
+      return 0;
+    }
+    if (drainResult.reason === 'ok') {
+      out.write(`Uploaded ${drainResult.uploaded} bucket(s).\n`);
+    } else if (drainResult.reason === 'throttled') {
+      out.write('Upload throttled; will retry later. Use --force to override.\n');
+    } else if (drainResult.reason === 'no-pending') {
+      out.write('Nothing to upload.\n');
+    } else if (drainResult.reason === 'error') {
+      out.write(`Upload deferred (will retry): ${drainResult.error}\n`);
+    } else {
+      out.write(`Upload skipped (${drainResult.reason}).\n`);
+    }
+    return 0;
+  } finally {
+    releaseLock();
+  }
 }
 
 module.exports = { run };

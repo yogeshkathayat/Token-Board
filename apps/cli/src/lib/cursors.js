@@ -1,41 +1,42 @@
 'use strict';
 
-const { paths } = require('./paths.js');
-const { readJsonOrDefault, writeJsonAtomic } = require('./fs-util.js');
+const fs = require('node:fs');
+const { paths } = require('./tracker-paths');
 
-/**
- * Per-source incremental parse state. Each parser stores whatever it needs
- * here (file inode, byte offset, last seen rowid, etc.). Keeping it in one
- * file makes `tokenboard doctor` and `uninstall` simple.
- *
- * Shape:
- *   {
- *     claude: { files: { [path]: { inode, offset, hash } } },
- *     codex: { files: { ... } },
- *     gemini: { files: { ... } },
- *     opencode: { lastRowId },
- *     kiro: { lastRowId, files: { ... } },
- *     cursor: { lastRowDate },
- *     copilot: { files: { ... } },
- *   }
- */
-function load() {
-  return readJsonOrDefault(paths().cursors, {});
+function emptyCursors() {
+  return { version: 1, files: {}, buckets: {}, claudeHashes: [], updatedAt: null };
 }
 
-function save(state) {
-  writeJsonAtomic(paths().cursors, state);
+function loadCursors() {
+  const { cursorsPath } = paths();
+  let raw = null;
+  try {
+    raw = fs.readFileSync(cursorsPath, 'utf8');
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return emptyCursors();
+    throw e;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return emptyCursors();
+  }
+  const base = emptyCursors();
+  return {
+    ...base,
+    ...parsed,
+    files: parsed && typeof parsed.files === 'object' && parsed.files ? parsed.files : {},
+    buckets: parsed && typeof parsed.buckets === 'object' && parsed.buckets ? parsed.buckets : {},
+    claudeHashes: Array.isArray(parsed && parsed.claudeHashes) ? parsed.claudeHashes : [],
+  };
 }
 
-function get(source) {
-  const all = load();
-  return all[source] || {};
+function saveCursors(cursors) {
+  const { root, cursorsPath } = paths();
+  fs.mkdirSync(root, { recursive: true });
+  cursors.updatedAt = new Date().toISOString();
+  fs.writeFileSync(cursorsPath, JSON.stringify(cursors, null, 2) + '\n');
 }
 
-function set(source, data) {
-  const all = load();
-  all[source] = data;
-  save(all);
-}
-
-module.exports = { load, save, get, set };
+module.exports = { emptyCursors, loadCursors, saveCursors };

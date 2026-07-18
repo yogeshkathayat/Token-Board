@@ -1,112 +1,70 @@
 #!/usr/bin/env bash
 # Build the Token Board menu bar app and (optionally) install it as a
-# launch agent so it starts on login.
+# launchd login item.
 #
 # Usage:
-#   ./build.sh           # build only
-#   ./build.sh run       # build + run in foreground
-#   ./build.sh install   # build + register as a launchd login item
-#   ./build.sh uninstall # remove the launchd login item
-#   ./build.sh dmg       # build + package as a distributable .dmg
+#   ./build.sh            # build only -> .build/TokenBoard.app
+#   ./build.sh install     # build + install into ~/Applications + launchd
+#   ./build.sh uninstall   # remove the launchd agent + installed app
 #
-# Note: this script invokes swiftc directly rather than `swift build`
-# because SwiftPM's manifest-loader stack on macOS Command Line Tools
-# can be flaky after partial OS updates. Direct compilation is more
-# robust and produces the same output.
+# Note: this invokes `swiftc` directly rather than `swift build` / an
+# .xcodeproj. SwiftPM's manifest-loader stack is broken on most Command Line
+# Tools installs (PackageDescription ABI mismatch + a duplicate
+# `SwiftBridging` modulemap left behind by an interrupted CLT update), so
+# direct compilation is the reliable path here.
+#
+# If swiftc itself fails with "redefinition of module 'SwiftBridging'":
+#   sudo mv /Library/Developer/CommandLineTools/usr/include/swift/module.modulemap{,.bak}
 set -euo pipefail
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
 ACTION="${1:-build}"
-PRODUCT="TokenBoardBar"
-APP_NAME="Token Board"
-BUNDLE_ID="com.tokenboard.bar"
-VERSION="0.1.0"
-BUILD_DIR="$DIR/.build/release"
-LAUNCHD_LABEL="com.tokenboard.bar"
-PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
-INSTALL_PATH="$HOME/Library/Application Support/TokenBoard/${PRODUCT}"
+
+PRODUCT="TokenBoard"
+APP_NAME="TokenBoard.app"
+BUNDLE_ID="com.mumzworld.tokenboard.bar"
+LAUNCHD_LABEL="com.mumzworld.tokenboard.bar"
+
+BUILD_DIR="$DIR/.build"
+APP_BUNDLE="$BUILD_DIR/$APP_NAME"
+
+INSTALL_DIR="$HOME/Applications"
+INSTALLED_APP="$INSTALL_DIR/$APP_NAME"
+
+PLIST_PATH="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
+LOG_PATH="$HOME/Library/Logs/TokenBoardBar.log"
 
 build() {
-  mkdir -p "$BUILD_DIR"
-  echo "→ swiftc -O Sources/TokenBoardBar/*.swift"
+  mkdir -p "$APP_BUNDLE/Contents/MacOS"
+
+  echo "-> swiftc -O Sources/*.swift"
   swiftc -O \
-    -framework AppKit -framework SwiftUI -framework Combine -framework Security \
-    -o "$BUILD_DIR/$PRODUCT" \
-    Sources/TokenBoardBar/*.swift
-  echo "✓ built $BUILD_DIR/$PRODUCT ($(stat -f %z "$BUILD_DIR/$PRODUCT" 2>/dev/null || echo ?) bytes)"
+    -framework AppKit -framework SwiftUI -framework Combine \
+    -o "$APP_BUNDLE/Contents/MacOS/$PRODUCT" \
+    Sources/*.swift
+
+  cp "$DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+  # Ad-hoc sign so the binary keeps a stable code identity across relaunches
+  # within the same build (not across rebuilds — see the token-storage note
+  # in Sources/ConfigStore.swift for why we don't rely on that for Keychain).
+  codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null 2>&1 || true
+
+  echo "OK built $APP_BUNDLE"
 }
 
-dmg() {
+install() {
   build
 
-  local stage="$DIR/.build/dmg-staging"
-  local app="$stage/${APP_NAME}.app"
-  local dmg_out="$DIR/.build/${PRODUCT}-${VERSION}.dmg"
+  mkdir -p "$INSTALL_DIR"
+  rm -rf "$INSTALLED_APP"
+  cp -R "$APP_BUNDLE" "$INSTALLED_APP"
 
-  rm -rf "$stage" "$dmg_out"
-  mkdir -p "$app/Contents/MacOS"
+  mkdir -p "$(dirname "$PLIST_PATH")"
+  mkdir -p "$(dirname "$LOG_PATH")"
 
-  cp "$BUILD_DIR/$PRODUCT" "$app/Contents/MacOS/$PRODUCT"
-  chmod +x "$app/Contents/MacOS/$PRODUCT"
-
-  cat > "$app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
-  <key>CFBundleName</key><string>${PRODUCT}</string>
-  <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
-  <key>CFBundleExecutable</key><string>${PRODUCT}</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>${VERSION}</string>
-  <key>CFBundleVersion</key><string>${VERSION}</string>
-  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>LSMinimumSystemVersion</key><string>13.0</string>
-  <key>LSUIElement</key><true/>
-  <key>NSHighResolutionCapable</key><true/>
-</dict>
-</plist>
-PLIST
-
-  # Ad-hoc sign so the binary inside the .app keeps a stable code identity
-  # (lets the user dismiss the first-launch Gatekeeper prompt once instead
-  # of every rebuild). Real distribution needs a Developer ID + notarization.
-  codesign --force --deep --sign - "$app" >/dev/null
-
-  ln -sf /Applications "$stage/Applications"
-
-  hdiutil create \
-    -volname "${APP_NAME}" \
-    -srcfolder "$stage" \
-    -ov -format UDZO \
-    "$dmg_out" >/dev/null
-
-  echo "✓ DMG: $dmg_out ($(stat -f %z "$dmg_out") bytes)"
-  echo "  Drag '${APP_NAME}.app' to Applications in the mounted DMG."
-  echo "  First launch: right-click → Open (ad-hoc signed, not notarized)."
-}
-
-case "$ACTION" in
-  build)
-    build
-    ;;
-  dmg)
-    dmg
-    ;;
-  run)
-    build
-    "$BUILD_DIR/$PRODUCT"
-    ;;
-  install)
-    build
-    mkdir -p "$(dirname "$INSTALL_PATH")"
-    cp "$BUILD_DIR/$PRODUCT" "$INSTALL_PATH"
-    chmod +x "$INSTALL_PATH"
-    LOG_PATH="$HOME/Library/Logs/TokenBoardBar.log"
-    cat > "$PLIST" <<EOF
+  cat > "$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -114,7 +72,7 @@ case "$ACTION" in
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${INSTALL_PATH}</string>
+    <string>${INSTALLED_APP}/Contents/MacOS/${PRODUCT}</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -124,24 +82,40 @@ case "$ACTION" in
 </dict>
 </plist>
 EOF
-    # Use the modern launchctl API; `load`/`unload` is deprecated and doesn't
-    # properly bind to the user's GUI session on macOS 13+, which makes
-    # NSStatusItem invisible.
-    launchctl bootout gui/$UID "$PLIST" 2>/dev/null || true
-    pkill -9 -f "$PRODUCT" 2>/dev/null || true
-    launchctl bootstrap gui/$UID "$PLIST"
-    echo "✓ installed and launched. The bar icon should appear shortly."
-    echo "  Logs: ${LOG_PATH:-~/Library/Logs/TokenBoardBar.log}"
+
+  # Use the modern launchctl API — `load`/`unload` is deprecated and doesn't
+  # bind to the GUI session correctly on macOS 13+, which makes the
+  # NSStatusItem invisible even though the process is running.
+  launchctl bootout "gui/$UID" "$PLIST_PATH" >/dev/null 2>&1 || true
+  pkill -x "$PRODUCT" >/dev/null 2>&1 || true
+  launchctl bootstrap "gui/$UID" "$PLIST_PATH"
+
+  echo "OK installed $INSTALLED_APP"
+  echo "  launchd label: $LAUNCHD_LABEL"
+  echo "  logs: $LOG_PATH"
+  echo "  bundle id: $BUNDLE_ID"
+}
+
+uninstall() {
+  launchctl bootout "gui/$UID" "$PLIST_PATH" >/dev/null 2>&1 || true
+  pkill -x "$PRODUCT" >/dev/null 2>&1 || true
+  rm -f "$PLIST_PATH"
+  rm -rf "$INSTALLED_APP"
+  echo "OK uninstalled"
+}
+
+case "$ACTION" in
+  build)
+    build
+    ;;
+  install)
+    install
     ;;
   uninstall)
-    launchctl bootout gui/$UID "$PLIST" 2>/dev/null || true
-    pkill -9 -f "$PRODUCT" 2>/dev/null || true
-    rm -f "$PLIST"
-    rm -f "$INSTALL_PATH"
-    echo "✓ uninstalled"
+    uninstall
     ;;
   *)
-    echo "Usage: $0 [build|run|install|uninstall|dmg]"
+    echo "Usage: $0 [build|install|uninstall]"
     exit 1
     ;;
 esac

@@ -1,45 +1,65 @@
 'use strict';
 
-const test = require('node:test');
-const assert = require('node:assert/strict');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const { test } = require('node:test');
+const assert = require('node:assert');
+const {
+  decideAutoUpload,
+  recordUploadSuccess,
+  recordUploadFailure,
+  parseRetryAfterMs,
+  normalizeState,
+} = require('../src/lib/upload-throttle');
 
-function freshHome() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tokenboard-test-'));
-  process.env.TOKENBOARD_HOME = dir;
-  for (const k of Object.keys(require.cache)) {
-    if (k.includes('/src/lib/')) delete require.cache[k];
-  }
-  return dir;
-}
-
-test('throttle: success resets backoff and pushes nextAllowedAt out', () => {
-  freshHome();
-  const throttle = require('../src/lib/throttle.js');
-  throttle.recordSuccess();
-  const s = throttle.loadState();
-  assert.ok(s.lastSuccessMs > 0);
-  assert.ok(s.nextAllowedAtMs > Date.now());
-  assert.equal(s.backoffStep, 0);
+test('decideAutoUpload blocks when nothing is pending', () => {
+  const d = decideAutoUpload({ nowMs: 1000, pendingBytes: 0, state: null });
+  assert.strictEqual(d.allowed, false);
+  assert.strictEqual(d.reason, 'no-pending');
 });
 
-test('throttle: failure increments backoff step', () => {
-  freshHome();
-  const throttle = require('../src/lib/throttle.js');
-  throttle.recordFailure('boom');
-  let s = throttle.loadState();
-  assert.equal(s.backoffStep, 1);
-  assert.equal(s.lastError, 'boom');
-  throttle.recordFailure('boom2');
-  s = throttle.loadState();
-  assert.equal(s.backoffStep, 2);
+test('decideAutoUpload allows when pending and not throttled', () => {
+  const d = decideAutoUpload({ nowMs: 1000, pendingBytes: 500, state: null });
+  assert.strictEqual(d.allowed, true);
+  assert.ok(d.maxBatches >= 1);
 });
 
-test('throttle: shouldAutoSync false when nextAllowedAt is in the future', () => {
-  freshHome();
-  const throttle = require('../src/lib/throttle.js');
-  throttle.recordSuccess();
-  assert.equal(throttle.shouldAutoSync(), false);
+test('decideAutoUpload blocks while within backoff window', () => {
+  const state = normalizeState({ nextAllowedAtMs: 5000 });
+  const d = decideAutoUpload({ nowMs: 1000, pendingBytes: 500, state });
+  assert.strictEqual(d.allowed, false);
+  assert.strictEqual(d.reason, 'throttled');
+  assert.strictEqual(d.blockedUntilMs, 5000);
+});
+
+test('recordUploadSuccess sets nextAllowed and clears backoff', () => {
+  const prev = recordUploadFailure({ nowMs: 1000, state: null, error: { status: 500 } });
+  const next = recordUploadSuccess({ nowMs: 2000, state: prev, randInt: () => 0 });
+  assert.strictEqual(next.lastSuccessMs, 2000);
+  assert.strictEqual(next.backoffUntilMs, 0);
+  assert.strictEqual(next.backoffStep, 0);
+  assert.ok(next.nextAllowedAtMs > 2000);
+});
+
+test('recordUploadFailure grows backoff step and respects Retry-After', () => {
+  const first = recordUploadFailure({ nowMs: 1000, state: null, error: { status: 500 } });
+  assert.ok(first.backoffUntilMs > 1000);
+  assert.strictEqual(first.backoffStep, 1);
+
+  const second = recordUploadFailure({ nowMs: 2000, state: first, error: { status: 500 } });
+  assert.strictEqual(second.backoffStep, 2);
+
+  const withRetry = recordUploadFailure({
+    nowMs: 1000,
+    state: null,
+    error: { status: 429, retryAfterMs: 10 * 60_000 },
+  });
+  assert.strictEqual(withRetry.backoffUntilMs, 1000 + 10 * 60_000);
+});
+
+test('parseRetryAfterMs handles seconds, dates, and junk', () => {
+  assert.strictEqual(parseRetryAfterMs('30'), 30_000);
+  assert.strictEqual(parseRetryAfterMs(''), null);
+  assert.strictEqual(parseRetryAfterMs('garbage'), null);
+  const future = new Date(Date.now() + 60_000).toUTCString();
+  const ms = parseRetryAfterMs(future);
+  assert.ok(ms > 0 && ms <= 60_000);
 });

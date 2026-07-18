@@ -1,20 +1,57 @@
 'use strict';
 
 /**
- * Half-hour UTC bucketing — must match the API's isHalfHourBoundary check.
+ * TokenBoard ingest contract (CLI side, CommonJS).
+ *
+ * Behavioural twin of apps/web/src/lib/contract.ts. packages/contract/test asserts the
+ * two agree on a shared vector. Change a rule here -> change it there too.
+ */
+
+const SOURCES = ['claude', 'codex', 'cursor', 'kiro', 'gemini', 'opencode', 'other'];
+
+const BUCKET_SEPARATOR = '|';
+
+function isKnownSource(s) {
+  return SOURCES.includes(s);
+}
+
+/** Zeroed token totals object. */
+function initTotals() {
+  return {
+    input_tokens: 0,
+    cached_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+    output_tokens: 0,
+    reasoning_output_tokens: 0,
+    total_tokens: 0,
+    billable_total_tokens: 0,
+  };
+}
+
+/** Add src totals into dst (mutates dst). */
+function addTotals(dst, src) {
+  for (const k of Object.keys(dst)) {
+    dst[k] += Number(src[k]) || 0;
+  }
+  return dst;
+}
+
+/**
+ * Floor a timestamp to its UTC half-hour boundary and return an ISO string.
+ * Minutes >= 30 -> :30, else :00; seconds and milliseconds zeroed.
  */
 function halfHourFloor(input) {
-  const dt = input instanceof Date ? input : new Date(input);
-  if (Number.isNaN(dt.getTime())) {
-    throw new RangeError(`halfHourFloor: invalid date ${String(input)}`);
+  const d = new Date(input);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`halfHourFloor: invalid timestamp ${String(input)}`);
   }
-  const minutes = dt.getUTCMinutes() >= 30 ? 30 : 0;
+  const minutes = d.getUTCMinutes() >= 30 ? 30 : 0;
   return new Date(
     Date.UTC(
-      dt.getUTCFullYear(),
-      dt.getUTCMonth(),
-      dt.getUTCDate(),
-      dt.getUTCHours(),
+      d.getUTCFullYear(),
+      d.getUTCMonth(),
+      d.getUTCDate(),
+      d.getUTCHours(),
       minutes,
       0,
       0,
@@ -22,61 +59,26 @@ function halfHourFloor(input) {
   ).toISOString();
 }
 
-function emptyBucket(source, model, hourStart) {
-  return {
-    hour_start: hourStart,
-    source,
-    model: model || 'unknown',
-    input_tokens: 0,
-    cached_input_tokens: 0,
-    cache_creation_input_tokens: 0,
-    output_tokens: 0,
-    reasoning_output_tokens: 0,
-    total_tokens: 0,
-    conversation_count: 0,
-  };
+/** True iff `iso` is a valid UTC half-hour boundary. */
+function isHalfHourBoundary(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return false;
+  if (d.toISOString() !== iso) return false;
+  const m = d.getUTCMinutes();
+  return (m === 0 || m === 30) && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
 }
 
-function addToBucket(target, delta) {
-  for (const k of [
-    'input_tokens',
-    'cached_input_tokens',
-    'cache_creation_input_tokens',
-    'output_tokens',
-    'reasoning_output_tokens',
-    'conversation_count',
-  ]) {
-    if (typeof delta[k] === 'number' && Number.isFinite(delta[k])) {
-      target[k] = (target[k] || 0) + Math.max(0, Math.floor(delta[k]));
-    }
-  }
-  // Recompute total each time so it stays consistent.
-  target.total_tokens =
-    (target.input_tokens || 0) +
-    (target.cached_input_tokens || 0) +
-    (target.cache_creation_input_tokens || 0) +
-    (target.output_tokens || 0) +
-    (target.reasoning_output_tokens || 0);
-  return target;
+function bucketKey(source, model, hourStart) {
+  return `${source}${BUCKET_SEPARATOR}${model}${BUCKET_SEPARATOR}${hourStart}`;
 }
 
-class BucketAggregator {
-  constructor() {
-    this.map = new Map(); // key: source|model|hour_start
-  }
-  add(source, model, ts, delta) {
-    const hourStart = halfHourFloor(ts);
-    const key = `${source}|${model || 'unknown'}|${hourStart}`;
-    let cur = this.map.get(key);
-    if (!cur) {
-      cur = emptyBucket(source, model, hourStart);
-      this.map.set(key, cur);
-    }
-    addToBucket(cur, delta);
-  }
-  values() {
-    return Array.from(this.map.values()).filter((b) => b.total_tokens > 0 || b.conversation_count > 0);
-  }
-}
-
-module.exports = { halfHourFloor, emptyBucket, addToBucket, BucketAggregator };
+module.exports = {
+  SOURCES,
+  BUCKET_SEPARATOR,
+  isKnownSource,
+  initTotals,
+  addTotals,
+  halfHourFloor,
+  isHalfHourBoundary,
+  bucketKey,
+};

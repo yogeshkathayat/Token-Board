@@ -1,67 +1,70 @@
 'use strict';
 
-const COMMANDS = {
-  init: () => require('./commands/init.js'),
-  sync: () => require('./commands/sync.js'),
-  serve: () => require('./commands/serve.js'),
-  status: () => require('./commands/status.js'),
-  doctor: () => require('./commands/doctor.js'),
-  uninstall: () => require('./commands/uninstall.js'),
-  openrouter: () => require('./commands/openrouter.js'),
-  cursor: () => require('./commands/cursor.js'),
-  daemon: () => require('./commands/daemon.js'),
-  link: () => require('./commands/link.js'),
-};
+const path = require('node:path');
 
-function printHelp() {
-  console.log(`tokenboard — track AI coding tool token usage on your laptop
+const HELP = `tokenboard — local AI token-usage tracker
 
 Usage:
   tokenboard <command> [options]
 
 Commands:
-  init                    First-time setup: link this device, install hooks
-  link <CODE>             Link a device using a code (alias for: init --link-code)
-  sync                    Parse all tool sources and upload to the server
-  daemon install          Install a background sync timer (10-min interval)
-  daemon uninstall        Remove the background timer
-  daemon status           Show daemon state
-  serve                   Run a local dashboard server on port 7680
-  status                  Print queue size, last sync, hooks installed
-  doctor                  Health check: backend reachable, hooks live
-  uninstall               Remove all hooks and config
-  openrouter login        Store your OpenRouter API key for usage pulls
-  openrouter logout       Forget the stored OpenRouter API key
-  cursor login            Paste your Cursor session cookie for accurate tracking
-  cursor logout           Forget the stored Cursor cookie
+  init            Show the privacy promise and pair this device
+                  (--base-url <url> --link-code <CODE> [--yes])
+  device-login    Pair using a dashboard link code
+                  (--link-code <CODE> [--base-url <url>])
+  sync            Parse local tool logs and upload usage buckets
+                  (--drain to only upload, --force to bypass throttle)
+  autosync        Manage the 5-min background sync agent
+                  (autosync install | uninstall | status)
+  status          Show config, pending queue size, and last sync
+  config          Get/set config values (config get [key] | config set <key> <value>)
 
-Global flags:
-  --debug, -d             Verbose logging
-  --help, -h              Show this help
+Options:
+  -h, --help      Show this help
+  -v, --version   Show version
 
-Environment:
-  TOKENBOARD_BASE_URL   Backend URL (set during \`init\`)
-  TOKENBOARD_DEBUG      1 to enable verbose logs
-`);
+Privacy: only token counts and timestamps are uploaded — never prompts,
+responses, file contents, or filenames.
+`;
+
+function version() {
+  try {
+    return require(path.join(__dirname, '..', 'package.json')).version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
 }
 
-async function run(argv) {
-  const cmd = argv[0];
+const COMMANDS = {
+  init: () => require('./commands/init'),
+  'device-login': () => require('./commands/device-login'),
+  sync: () => require('./commands/sync'),
+  autosync: () => require('./commands/autosync'),
+  status: () => require('./commands/status'),
+  config: () => require('./commands/config'),
+};
 
-  if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') {
-    printHelp();
-    return;
+async function main(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+  const first = args[0];
+
+  if (!first || first === '-h' || first === '--help' || first === 'help') {
+    process.stdout.write(HELP);
+    return 0;
+  }
+  if (first === '-v' || first === '--version' || first === 'version') {
+    process.stdout.write(`${version()}\n`);
+    return 0;
   }
 
-  const loader = COMMANDS[cmd];
+  const loader = COMMANDS[first];
   if (!loader) {
-    console.error(`Unknown command: ${cmd}`);
-    printHelp();
-    process.exit(2);
+    process.stderr.write(`unknown command: ${first}\n\n${HELP}`);
+    return 2;
   }
 
-  const mod = loader();
-  await mod.run(argv.slice(1));
+  const command = loader();
+  return command.run(args.slice(1));
 }
 
-module.exports = { run };
+module.exports = { main, HELP, version };

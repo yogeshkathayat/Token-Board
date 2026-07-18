@@ -1,26 +1,27 @@
 'use strict';
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
+const { userHome } = require('../lib/tracker-paths');
+const { readNewLines } = require('../lib/filetail');
 
-const cursors = require('../lib/cursors.js');
-const { BucketAggregator } = require('../lib/buckets.js');
+const source = 'codex';
+const DEFAULT_MODEL = 'unknown';
 
-const SOURCE = 'codex';
-
-/**
- * Codex CLI writes rollout JSONL files to ~/.codex/sessions/YYYY/MM/DD/.
- * Each line is an event; tokens-count lines carry `total_token_usage` and
- * `last_token_usage`. We dedupe by total counter (skip lines that didn't
- * advance the totals).
- */
+const USAGE_KEYS = [
+  'input_tokens',
+  'cached_input_tokens',
+  'cache_creation_input_tokens',
+  'output_tokens',
+  'reasoning_output_tokens',
+  'total_tokens',
+];
 
 function sessionsDir() {
-  return path.join(os.homedir(), '.codex', 'sessions');
+  return path.join(process.env.CODEX_HOME || path.join(userHome(), '.codex'), 'sessions');
 }
 
-async function detect() {
+function detect() {
   try {
     return fs.statSync(sessionsDir()).isDirectory();
   } catch {
@@ -28,118 +29,136 @@ async function detect() {
   }
 }
 
-function* walk(rootDir) {
-  const stack = [rootDir];
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const e of entries) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) stack.push(full);
-      else if (e.isFile() && e.name.startsWith('rollout-') && e.name.endsWith('.jsonl')) yield full;
-    }
+function walk(dir, out) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full, out);
+    else if (entry.isFile() && entry.name.endsWith('.jsonl')) out.push(full);
   }
 }
 
-function asNum(v) {
-  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+function toInt(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
 }
 
-async function parse() {
-  const state = cursors.get(SOURCE);
-  state.files = state.files || {};
-  const agg = new BucketAggregator();
+function extractTokenCount(obj) {
+  const payload = obj && obj.payload;
+  if (!payload) return null;
+  if (payload.type === 'token_count') return { info: payload.info, timestamp: obj.timestamp || null };
+  const msg = payload.msg;
+  if (msg && msg.type === 'token_count') return { info: msg.info, timestamp: obj.timestamp || null };
+  return null;
+}
 
-  for (const file of walk(sessionsDir())) {
-    let stat;
-    try {
-      stat = fs.statSync(file);
-    } catch {
-      continue;
+function isNonEmptyObject(v) {
+  return Boolean(v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length > 0);
+}
+
+function isAllZero(u) {
+  for (const k of USAGE_KEYS) if (toInt(u[k]) !== 0) return false;
+  return true;
+}
+
+// Codex reports input_tokens as the TOTAL prompt with cached_input_tokens as the
+// cached subset. Our schema stores input_tokens as pure non-cached input, so we
+// subtract the cached slice (mirrors the reference; prevents ~6-7x cost
+// inflation on cache-heavy sessions).
+function normalizeUsage(u) {
+  const out = {};
+  for (const k of USAGE_KEYS) out[k] = toInt(u[k]);
+  out.input_tokens = Math.max(0, out.input_tokens - out.cached_input_tokens);
+  return out;
+}
+
+// Cumulative token usage: prefer the running total delta against the previous
+// snapshot; fall back to the per-turn last_token_usage.
+function pickDelta(lastUsage, totalUsage, prevTotals) {
+  const hasLast = isNonEmptyObject(lastUsage);
+  const hasTotal = isNonEmptyObject(totalUsage);
+  const hasPrev = isNonEmptyObject(prevTotals);
+
+  if (hasTotal && hasPrev) {
+    const reset = toInt(totalUsage.total_tokens) < toInt(prevTotals.total_tokens);
+    if (reset) {
+      const n = normalizeUsage(hasLast ? lastUsage : totalUsage);
+      return isAllZero(n) ? null : n;
     }
-    let prev = state.files[file];
-    if (!prev || prev.inode !== stat.ino || prev.size > stat.size) {
-      prev = { inode: stat.ino, offset: 0, size: 0, lastTotal: 0, lastModel: null };
-    }
-    if (stat.size <= prev.offset) {
-      state.files[file] = prev;
-      continue;
-    }
+    const delta = {};
+    for (const k of USAGE_KEYS) delta[k] = Math.max(0, toInt(totalUsage[k]) - toInt(prevTotals[k]));
+    const n = normalizeUsage(delta);
+    return isAllZero(n) ? null : n;
+  }
+  if (hasTotal) {
+    const n = normalizeUsage(totalUsage);
+    return isAllZero(n) ? null : n;
+  }
+  if (hasLast) {
+    const n = normalizeUsage(lastUsage);
+    return isAllZero(n) ? null : n;
+  }
+  return null;
+}
 
-    const fd = fs.openSync(file, 'r');
-    try {
-      const len = stat.size - prev.offset;
-      const buf = Buffer.alloc(len);
-      fs.readSync(fd, buf, 0, len, prev.offset);
-      const text = buf.toString('utf8');
-      const lastNl = text.lastIndexOf('\n');
-      const usable = lastNl >= 0 ? text.slice(0, lastNl) : text;
-      const consumed = lastNl >= 0 ? lastNl + 1 : 0;
+async function parse({ cursors, aggregate }) {
+  const files = [];
+  walk(sessionsDir(), files);
+  files.sort();
+  if (!cursors.files || typeof cursors.files !== 'object') cursors.files = {};
 
-      let lastTotal = prev.lastTotal || 0;
-      let lastModel = prev.lastModel || null;
+  for (const filePath of files) {
+    const prev = cursors.files[filePath] || null;
+    const result = readNewLines(filePath, prev);
+    if (!result) continue;
 
-      for (const line of usable.split('\n')) {
-        if (!line) continue;
-        let ev;
-        try {
-          ev = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (ev?.type === 'session_meta' || ev?.type === 'session_start') {
-          if (typeof ev.model === 'string') lastModel = ev.model;
-        }
-        const u = ev?.total_token_usage || ev?.usage?.total || ev?.total_usage;
-        const last = ev?.last_token_usage || ev?.usage?.last || ev?.last_usage;
-        const ts = ev?.timestamp || ev?.time || ev?.created_at;
-        if (!ts) continue;
+    let model = prev && typeof prev.lastModel === 'string' ? prev.lastModel : null;
+    let totals = prev && prev.lastTotals && typeof prev.lastTotals === 'object' ? prev.lastTotals : null;
 
-        let delta = null;
-        if (last && typeof last === 'object') {
-          delta = {
-            input_tokens: asNum(last.input_tokens),
-            cached_input_tokens: asNum(last.cached_input_tokens),
-            output_tokens: asNum(last.output_tokens),
-            reasoning_output_tokens: asNum(last.reasoning_output_tokens),
-          };
-        } else if (u && typeof u === 'object') {
-          const total = asNum(u.input_tokens) + asNum(u.output_tokens);
-          if (total <= lastTotal) continue;
-          delta = {
-            input_tokens: asNum(u.input_tokens) - asNum(state.lastInput || 0),
-            cached_input_tokens: asNum(u.cached_input_tokens),
-            output_tokens: asNum(u.output_tokens) - asNum(state.lastOutput || 0),
-            reasoning_output_tokens: asNum(u.reasoning_output_tokens),
-          };
-          lastTotal = total;
-        }
-        if (!delta) continue;
-        const dtotal =
-          delta.input_tokens + delta.output_tokens + delta.reasoning_output_tokens + delta.cached_input_tokens;
-        if (dtotal <= 0) continue;
-        agg.add(SOURCE, lastModel || 'unknown', ts, delta);
+    for (const line of result.lines) {
+      const maybeToken = line.includes('"token_count"');
+      const maybeCtx =
+        !maybeToken &&
+        (line.includes('"turn_context"') || line.includes('"session_meta"')) &&
+        line.includes('"model"');
+      if (!maybeToken && !maybeCtx) continue;
+
+      let obj;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
       }
 
-      state.files[file] = {
-        inode: stat.ino,
-        offset: prev.offset + consumed,
-        size: stat.size,
-        lastTotal,
-        lastModel,
-      };
-    } finally {
-      fs.closeSync(fd);
-    }
-  }
+      if ((obj.type === 'turn_context' || obj.type === 'session_meta') && isNonEmptyObject(obj.payload)) {
+        if (typeof obj.payload.model === 'string' && obj.payload.model.trim()) model = obj.payload.model;
+        continue;
+      }
 
-  cursors.set(SOURCE, state);
-  return agg.values();
+      const token = extractTokenCount(obj);
+      if (!token || !isNonEmptyObject(token.info)) continue;
+      const ts = typeof token.timestamp === 'string' ? token.timestamp : null;
+      if (!ts) continue;
+
+      const delta = pickDelta(token.info.last_token_usage, token.info.total_token_usage, totals);
+      if (isNonEmptyObject(token.info.total_token_usage)) totals = token.info.total_token_usage;
+      if (!delta) continue;
+
+      aggregate(source, model || DEFAULT_MODEL, ts, delta, 1);
+    }
+
+    cursors.files[filePath] = {
+      inode: result.cursor.inode,
+      offset: result.cursor.offset,
+      lastModel: model,
+      lastTotals: totals,
+    };
+  }
 }
 
-module.exports = { source: SOURCE, detect, parse };
+module.exports = { source, detect, parse };

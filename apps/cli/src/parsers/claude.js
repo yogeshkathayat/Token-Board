@@ -1,31 +1,19 @@
 'use strict';
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
+const { userHome } = require('../lib/tracker-paths');
+const { readNewLines } = require('../lib/filetail');
 
-const cursors = require('../lib/cursors.js');
-const { halfHourFloor, emptyBucket, addToBucket } = require('../lib/buckets.js');
-
-const SOURCE = 'claude';
-
-/**
- * Claude Code stores per-project history under ~/.claude/projects/.../*.jsonl.
- * Each line is a JSON event; events with `usage` carry token counts.
- *
- * Dedup key: `message.id + ":" + requestId`. This identifies a single billed
- * Anthropic API call. The same call is logged into multiple jsonl files
- * (sidechain, /subagents/, resumed sessions) with the *same* message.id and
- * requestId but different per-event `uuid` values, so deduping by `uuid`
- * undercounts duplicates and inflates totals. We fall back to `uuid` only
- * when those fields are absent (legacy logs).
- */
+const source = 'claude';
+const DEFAULT_MODEL = 'unknown';
+const MAX_HASHES = 100_000;
 
 function projectsDir() {
-  return path.join(os.homedir(), '.claude', 'projects');
+  return path.join(userHome(), '.claude', 'projects');
 }
 
-async function detect() {
+function detect() {
   try {
     return fs.statSync(projectsDir()).isDirectory();
   } catch {
@@ -33,221 +21,120 @@ async function detect() {
   }
 }
 
-function* walkJsonl(rootDir) {
-  const stack = [rootDir];
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    let entries;
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(full);
-      } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        yield full;
-      }
-    }
+function walk(dir, out) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full, out);
+    else if (entry.isFile() && entry.name.endsWith('.jsonl')) out.push(full);
   }
 }
 
-function pickModel(event) {
-  return (
-    event?.message?.model ||
-    event?.model ||
-    event?.usage?.model ||
-    'unknown'
-  );
+function toInt(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
 }
 
-function pickTimestamp(event) {
-  return (
-    event?.timestamp ||
-    event?.message?.timestamp ||
-    event?.created_at ||
-    null
-  );
-}
-
-function pickUsage(event) {
-  const u = event?.message?.usage || event?.usage;
-  if (!u) return null;
+// Claude reports per-message usage (not cumulative), so each message's usage is
+// added directly. cache_read is treated as cached input; input_tokens stays the
+// non-cached prompt count.
+function normalizeUsage(u) {
+  const input = toInt(u.input_tokens);
+  const output = toInt(u.output_tokens);
+  const cacheCreation = toInt(u.cache_creation_input_tokens);
+  const cacheRead = toInt(u.cache_read_input_tokens);
   return {
-    input_tokens: u.input_tokens || 0,
-    output_tokens: u.output_tokens || 0,
-    cached_input_tokens: u.cache_read_input_tokens || u.cached_input_tokens || 0,
-    cache_creation_input_tokens: u.cache_creation_input_tokens || 0,
-    reasoning_output_tokens: u.reasoning_output_tokens || 0,
+    input_tokens: input,
+    cached_input_tokens: cacheRead,
+    cache_creation_input_tokens: cacheCreation,
+    output_tokens: output,
+    reasoning_output_tokens: 0,
+    total_tokens: input + output + cacheCreation + cacheRead,
   };
 }
 
-const SEEN_HASH_CAP = 100_000;
-
-// Why cumulative state? The API upserts buckets with REPLACE semantics
-// (excluded.input_tokens overwrites the existing row). If we only emit
-// the delta from this parse run, an incremental sync clobbers the
-// previously-uploaded full-hour bucket with just the new slice. So we
-// persist the running totals per (model, hour_start) in cursor state,
-// mutate them as new events arrive, and emit the full cumulative value
-// of any bucket touched this run — matching TokenTracker's design.
-
-function bucketKey(model, hourStart) {
-  return `${model || 'unknown'}|${hourStart}`;
+function isAllZero(d) {
+  return (
+    d.input_tokens === 0 &&
+    d.cached_input_tokens === 0 &&
+    d.cache_creation_input_tokens === 0 &&
+    d.output_tokens === 0
+  );
 }
 
-function loadHourlyState(raw) {
-  const out = {};
-  if (!raw || typeof raw !== 'object') return out;
-  for (const [k, v] of Object.entries(raw)) {
-    if (!v || typeof v !== 'object') continue;
-    out[k] = {
-      hour_start: String(v.hour_start || ''),
-      source: SOURCE,
-      model: String(v.model || 'unknown'),
-      input_tokens: Number(v.input_tokens || 0),
-      cached_input_tokens: Number(v.cached_input_tokens || 0),
-      cache_creation_input_tokens: Number(v.cache_creation_input_tokens || 0),
-      output_tokens: Number(v.output_tokens || 0),
-      reasoning_output_tokens: Number(v.reasoning_output_tokens || 0),
-      total_tokens: Number(v.total_tokens || 0),
-      conversation_count: Number(v.conversation_count || 0),
-    };
-  }
-  return out;
+// Anthropic guarantees message.id is globally unique per response — a valid
+// dedup key on its own. Prevents double counting the same message across a
+// re-scan or across main/subagent files.
+function dedupKey(obj) {
+  const msgId = obj && obj.message && typeof obj.message.id === 'string' ? obj.message.id : null;
+  if (!msgId) return null;
+  const reqId = typeof obj.requestId === 'string' && obj.requestId ? obj.requestId : null;
+  return reqId ? `${msgId}:${reqId}` : msgId;
 }
 
-async function parse() {
-  const dir = projectsDir();
-  const state = cursors.get(SOURCE);
-  state.files = state.files || {};
-  state.seenHashes = state.seenHashes || {};
-  const hourly = loadHourlyState(state.hourly);
-  const touched = new Set();
-  let convCount = 0;
-  const seenHashes = new Set(Object.keys(state.seenHashes));
+async function parse({ cursors, aggregate }) {
+  const files = [];
+  walk(projectsDir(), files);
+  files.sort();
 
-  for (const file of walkJsonl(dir)) {
-    let stat;
-    try {
-      stat = fs.statSync(file);
-    } catch {
-      continue;
-    }
+  if (!cursors.files || typeof cursors.files !== 'object') cursors.files = {};
+  const seen = new Set(Array.isArray(cursors.claudeHashes) ? cursors.claudeHashes : []);
 
-    let prev = state.files[file];
-    if (!prev || prev.inode !== stat.ino || prev.size > stat.size) {
-      // New file or rotated/truncated — start at offset 0.
-      prev = { inode: stat.ino, offset: 0, size: 0 };
-    }
-    if (stat.size <= prev.offset) {
-      state.files[file] = prev;
-      continue;
-    }
+  for (const filePath of files) {
+    const prev = cursors.files[filePath] || null;
+    const result = readNewLines(filePath, prev);
+    if (!result) continue;
+    const isMain = !filePath.includes(`${path.sep}subagents${path.sep}`);
 
-    const fd = fs.openSync(file, 'r');
-    try {
-      const len = stat.size - prev.offset;
-      const buf = Buffer.alloc(len);
-      fs.readSync(fd, buf, 0, len, prev.offset);
-      const text = buf.toString('utf8');
-      const lastNl = text.lastIndexOf('\n');
-      const usable = lastNl >= 0 ? text.slice(0, lastNl) : text;
-      const consumed = lastNl >= 0 ? lastNl + 1 : 0;
-
-      for (const line of usable.split('\n')) {
-        if (!line) continue;
-        let event;
-        try {
-          event = JSON.parse(line);
-        } catch {
-          continue;
-        }
-
-        // Count user-typed turns regardless of whether the event carries
-        // usage — user messages typically don't (the assistant's reply does).
-        if (event?.role === 'user' || event?.message?.role === 'user') {
-          convCount += 1;
-        }
-
-        const ts = pickTimestamp(event);
-        const usage = pickUsage(event);
-        if (!ts || !usage) continue;
-
-        // Skip all-zero usage events (Claude logs them on user/tool_result turns).
-        if (
-          usage.input_tokens === 0 &&
-          usage.cached_input_tokens === 0 &&
-          usage.cache_creation_input_tokens === 0 &&
-          usage.output_tokens === 0 &&
-          usage.reasoning_output_tokens === 0
-        ) {
-          continue;
-        }
-
-        // The billable identity of an assistant message: message.id + requestId.
-        // Claude logs the same call into multiple jsonl files (sidechain,
-        // /subagents/, resumed sessions) — same msg.id + requestId, different
-        // per-event uuid. Falling back to uuid keeps legacy events working.
-        const msgId = event?.message?.id;
-        const reqId = event?.requestId;
-        const hash =
-          msgId && reqId
-            ? `${msgId}:${reqId}`
-            : event?.uuid || event?.id || event?.message?.id || null;
-        if (hash) {
-          if (seenHashes.has(hash)) continue;
-          seenHashes.add(hash);
-        }
-
-        const model = pickModel(event);
-        const hourStart = halfHourFloor(ts);
-        const key = bucketKey(model, hourStart);
-        if (!hourly[key]) hourly[key] = emptyBucket(SOURCE, model, hourStart);
-        addToBucket(hourly[key], usage);
-        touched.add(key);
+    for (const line of result.lines) {
+      if (!line.includes('"usage"') && !(isMain && line.includes('"type":"user"'))) continue;
+      let obj;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
       }
 
-      state.files[file] = {
-        inode: stat.ino,
-        offset: prev.offset + consumed,
-        size: stat.size,
-      };
-    } finally {
-      fs.closeSync(fd);
+      if (isMain && obj && obj.type === 'user') {
+        const content = obj.message && obj.message.content;
+        const hasText =
+          typeof content === 'string' ||
+          (Array.isArray(content) && content.some((b) => b && b.type === 'text'));
+        const ts = typeof obj.timestamp === 'string' ? obj.timestamp : null;
+        if (hasText && ts) {
+          aggregate(source, DEFAULT_MODEL, ts, normalizeUsage({}), 1);
+        }
+      }
+
+      const usage = (obj && obj.message && obj.message.usage) || (obj && obj.usage);
+      if (!usage || typeof usage !== 'object') continue;
+      const ts = typeof obj.timestamp === 'string' ? obj.timestamp : null;
+      if (!ts) continue;
+
+      const key = dedupKey(obj);
+      if (key && seen.has(key)) continue;
+
+      const delta = normalizeUsage(usage);
+      if (isAllZero(delta)) continue;
+      if (key) seen.add(key);
+
+      const model =
+        (obj.message && typeof obj.message.model === 'string' && obj.message.model) ||
+        (typeof obj.model === 'string' && obj.model) ||
+        DEFAULT_MODEL;
+      aggregate(source, model, ts, delta, 0);
     }
+
+    cursors.files[filePath] = { inode: result.cursor.inode, offset: result.cursor.offset };
   }
 
-  // Persist dedup hashes across runs. Cap to bound state size; new entries
-  // are appended to the end of seenHashes during this run, so slicing the
-  // tail keeps the most-recently-observed messages.
-  const hashArr = Array.from(seenHashes);
-  state.seenHashes = {};
-  for (const h of hashArr.slice(-SEEN_HASH_CAP)) state.seenHashes[h] = 1;
-  // Clear the legacy field so we don't carry a stale 5k-entry uuid set.
-  if (state.seenIds) delete state.seenIds;
-
-  // Emit only buckets touched this run, with their FULL cumulative value.
-  const out = [];
-  const touchedKeys = Array.from(touched).sort((a, b) =>
-    hourly[a].hour_start < hourly[b].hour_start ? -1 : 1,
-  );
-  for (const k of touchedKeys) {
-    const b = hourly[k];
-    if (b.total_tokens > 0 || b.conversation_count > 0) out.push({ ...b });
-  }
-  if (out.length > 0 && convCount > 0) {
-    // Distribute conversations to the latest bucket of each model.
-    // (Per-bucket convcount attribution is a separate cleanup.)
-    out[out.length - 1].conversation_count = convCount;
-    hourly[touchedKeys[touchedKeys.length - 1]].conversation_count = convCount;
-  }
-
-  state.hourly = hourly;
-  cursors.set(SOURCE, state);
-  return out;
+  const all = Array.from(seen);
+  cursors.claudeHashes = all.length > MAX_HASHES ? all.slice(all.length - MAX_HASHES) : all;
 }
 
-module.exports = { source: SOURCE, detect, parse };
+module.exports = { source, detect, parse };

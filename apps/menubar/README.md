@@ -1,49 +1,51 @@
 # Token Board menu bar widget (macOS)
 
-Lightweight Swift menu bar app that shows your current token count and a
-mini summary popover. Powered by Swift Package Manager — no Xcode project,
-no code signing, no DMG packaging. Just `./build.sh` and you're done.
+A thin native `NSStatusItem` widget. It has no server, no WebView, and no
+local state of its own beyond a server URL + auth token — it just polls the
+deployed TokenBoard backend and shows today's token count in the menu bar.
 
 ## What it shows
 
-Bar item: `📊 1.7B` (compact today total)
+Bar item: `TB 1.2M` (compact today total, refreshed every ~60s)
 
-Popover (~360×480):
-- 4 stat cards: Today, 7-Day, 30-Day, Total
-- Sources list (last 30 days, all 8 tools)
-- Top 5 models by tokens
-- Refresh + Settings + Open Dashboard + Quit
-- Settings sheet for server URL + personal access token (stored in Keychain)
+Menu:
+- Today / this week / all-time token totals (or "Not connected" if
+  unauthenticated or the server is unreachable)
+- **Sync Now** — informational only. The CLI (`tokenboard sync`) does the
+  actual syncing in the background; this just re-fetches the summary so the
+  bar reflects whatever the CLI has already uploaded.
+- **Open Dashboard** — opens the web dashboard in your default browser.
+- **Settings…** — a small window to set the server URL and paste an auth
+  token.
+- **Quit**
 
 ## Build + run
 
 ```bash
 cd apps/menubar
-./build.sh run
+./build.sh build     # -> .build/TokenBoard.app
+open .build/TokenBoard.app
 ```
 
-Requires Swift 5.5+ on a working toolchain (Xcode 15+ recommended).
+Requires only Xcode Command Line Tools (`xcode-select --install`) — no full
+Xcode, no Swift Package Manager.
 
-### If `swift build` fails with "this SDK is not supported by the compiler"
+### Why `swiftc` and not `swift build` / an .xcodeproj
 
-That's a Command Line Tools version skew — your installed CLT compiler and
-SDK were built with different swiftlang versions. Two fixes:
+SwiftPM's manifest-loader stack is broken on most Command Line Tools
+installs: a `PackageDescription` ABI mismatch plus a duplicate
+`SwiftBridging` modulemap left behind by an interrupted CLT update. Direct
+`swiftc -O Sources/*.swift` compilation sidesteps that whole stack and
+produces the same output. If `swiftc` itself fails with:
 
-```bash
-# Option A: refresh CLT
-sudo rm -rf /Library/Developer/CommandLineTools
-sudo xcode-select --install   # then re-run ./build.sh
-
-# Option B: install full Xcode (also includes a matching toolchain)
-mas install 497799835   # or download from https://developer.apple.com/xcode/
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+```
+redefinition of module 'SwiftBridging'
 ```
 
-Verify with:
+fix it with:
 
 ```bash
-swift --version            # should match SDK version in MacOSX.sdk
-xcrun --show-sdk-path      # path to the SDK actually being used
+sudo mv /Library/Developer/CommandLineTools/usr/include/swift/module.modulemap{,.bak}
 ```
 
 ## Install as a login item
@@ -52,59 +54,91 @@ xcrun --show-sdk-path      # path to the SDK actually being used
 ./build.sh install
 ```
 
-This compiles `TokenBoardBar`, copies it to
-`~/Library/Application Support/TokenBoard/`, and writes a launchd plist at
-`~/Library/LaunchAgents/com.tokenboard.bar.plist` so it starts on login.
+This compiles `TokenBoard.app`, copies it to `~/Applications/`, writes a
+LaunchAgent plist at `~/Library/LaunchAgents/com.mumzworld.tokenboard.bar.plist`,
+and registers it with `launchctl bootstrap gui/$UID` (the modern API —
+`launchctl load`/`unload` is deprecated and doesn't bind to the GUI session
+correctly on macOS 13+, which makes the `NSStatusItem` invisible even though
+the process is running).
 
 ```bash
 ./build.sh uninstall
 ```
 
-Removes everything.
+Runs `launchctl bootout gui/$UID/com.mumzworld.tokenboard.bar` and removes
+the installed app + plist.
 
-## How it authenticates
+Logs: `~/Library/Logs/TokenBoardBar.log`
 
-The app reads two things on launch:
+## Configuration
 
-1. **Server URL** — picked up automatically from
-   `~/.tokenboard/config.json` written by `tokenboard init` on the same Mac.
-   You can also override it from the Settings sheet.
+The app reads two things, in priority order:
 
-2. **Personal access token** — paste once in Settings. Stored in macOS
-   Keychain as `service=com.tokenboard.bar`. The bar app uses this token
-   to call `/api/v1/usage/summary`, `/usage/daily`, `/usage/model-breakdown`.
+1. **This app's own config** at
+   `~/Library/Application Support/TokenBoard/config.json` (`{"baseUrl": "..."}`,
+   mode 0600) — written by the Settings window. An explicit user override
+   here always wins.
+2. **The CLI's config** at `~/.tokenboard/config.json` (written by
+   `tokenboard init` / `tokenboard link`) — read-only from here. Keys match
+   the CLI's own format (`apps/cli/src/lib/config.js`): `baseUrl`,
+   `deviceToken`.
 
-> A "personal access token" is a long-lived user JWT or refresh-issued JWT.
-> The dashboard's Settings page can expose a "Generate token for menu bar"
-> button — that's a small follow-up. For now, paste an `access_token` from a
-> recent `/api/v1/auth/login` response, or any short-lived JWT you have at
-> hand. The bar app handles 401 by surfacing a "Not connected" prompt.
+If neither is set, it falls back to `http://localhost:3000`.
+
+The auth token follows the same priority: a token pasted into Settings
+(stored at `~/Library/Application Support/TokenBoard/token`, mode 0600) wins;
+otherwise the app reuses the CLI's `deviceToken` from
+`~/.tokenboard/config.json`.
+
+**Why a 0600 file instead of Keychain**: every unsigned dev rebuild changes
+the binary's on-disk identity, and macOS Keychain ACLs default to "this
+exact binary only" — a rebuild would make the previous entry unreadable
+(`errSecUserCanceled` / `-128`). A 0600 file has the same effective blast
+radius (readable only by this OS user) without that rebuild-breaks-auth
+footgun. See the comment on `ConfigStore` in `Sources/ConfigStore.swift`.
+
+The bearer token is only ever sent over `https://`, or to `localhost` /
+`127.0.0.1` / `*.local` for local dev — never in cleartext to a remote host.
+
+## Endpoint
+
+```
+GET {baseUrl}/api/usage/summary?tz={TimeZone.current.identifier}
+Authorization: Bearer <token>
+```
+
+Expected response:
+
+```json
+{
+  "tz": "Asia/Dubai",
+  "totals": { "today": "123456", "week": "987654", "month": "...", "total": "..." }
+}
+```
 
 ## Layout
 
 ```
 apps/menubar/
-├── Package.swift
-├── Sources/TokenBoardBar/
-│   ├── main.swift            # NSApp.run() entry point (accessory policy)
-│   ├── AppDelegate.swift     # status bar item + popover wiring
-│   ├── APIClient.swift       # tiny URLSession wrapper
-│   ├── Models.swift          # API response types + CLI config loader
-│   ├── Settings.swift        # UserDefaults + Keychain
-│   ├── UsageViewModel.swift  # fetches in parallel, publishes summary
-│   └── UsageView.swift       # SwiftUI popover
-├── build.sh                  # build / run / install / uninstall
+├── Sources/
+│   ├── AppDelegate.swift          @main entry point (LSUIElement, no dock icon)
+│   ├── StatusBarController.swift  NSStatusItem + NSMenu, 60s refresh timer
+│   ├── APIClient.swift            tiny URLSession wrapper for /api/usage/summary
+│   ├── Models.swift                response decoding + compact number formatting
+│   ├── ConfigStore.swift          server URL + token resolution/storage
+│   └── SettingsWindow.swift       small SwiftUI settings form in a plain NSWindow
+├── Info.plist                     template copied into the built .app bundle
+├── build.sh                       build / install / uninstall
 └── README.md
 ```
 
 ## Caveats
 
-- **Unsigned binary**: `swift build -c release` produces an ad-hoc-signed
-  Mach-O. Gatekeeper won't block running it from the user's own home dir
-  but will warn on first download. For company-wide rollout, sign with your
-  Developer ID and notarize before distribution.
-- **No icon assets**: the app uses an inline-drawn template image. To bundle
-  a `.icns` you'd need a proper `.app` bundle (Xcode project or a
-  `Contents/Info.plist` + `Resources/` layout).
-- **Refresh cadence**: every 5 minutes via `Timer.scheduledTimer`. Cheap on
-  the API; the popover does an extra refresh on each open.
+- **Unsigned binary**: `build.sh` ad-hoc signs the bundle so the code
+  identity stays stable across relaunches within the same build, but
+  Gatekeeper will still warn on first launch of a freshly built bundle
+  (right-click → Open). For company-wide distribution, sign with a
+  Developer ID and notarize.
+- **No custom icon**: uses a plain text status item (`TB 1.2M`). Dropping in
+  a `.icns` just needs an `AppIcon` entry added to `Info.plist` plus a
+  `Contents/Resources/AppIcon.icns` file in `build.sh`'s `build()` step.

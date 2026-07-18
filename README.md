@@ -1,291 +1,238 @@
-<div align="center">
+# TokenBoard
 
-<img src="docs/screenshots/logo.png" width="80" height="80" alt="Token Board logo" />
-
-# Token Board
-
-**Self-hostable AI token usage tracker — see what your team is spending across Claude, Codex, Gemini, OpenCode, Kiro, Cursor, Copilot, and OpenRouter.**
-
-[Features](#features) · [Quickstart](#quickstart) · [Architecture](#architecture) · [CLI](#cli) · [Menu bar widget](#menu-bar-widget) · [Deploy](#deploy) · [Contributing](#contributing)
-
-</div>
-
----
-
-## What it is
-
-Token Board is a small **self-hosted** SaaS for tracking AI coding-tool token usage across an engineering team.
-
-Each engineer installs a tiny Node.js CLI on their laptop. The CLI parses local AI tool history files (Claude Code's JSONL, Kiro's SQLite, etc.) and uploads aggregated half-hour buckets to your own server. Everyone sees their usage on a private dashboard with a leaderboard, daily trend, model breakdown, and an opt-in privacy toggle.
-
-A native macOS menu bar widget shows today's count at a glance, with a popover for stat cards and top models — like having `htop` for tokens pinned to your menu bar.
-
-**Privacy by design**: only token _counts_ and _timestamps_ are uploaded — never prompts, responses, or file contents.
-
-## Screenshots
-
-### Dashboard
-
-The signed-in dashboard with stat cards (Today / 7-Day / 30-Day / Total), per-tool limits, GitHub-style activity heatmap, trend chart with period selector, and top-models list.
-
-![Dashboard](docs/screenshots/dashboard.png)
-
-### Leaderboard
-
-Per-source breakdown across all 8 supported tools, with rank medals for top 3 and gradient avatars for each engineer. Privacy toggle in Settings makes you anonymous.
-
-![Leaderboard](docs/screenshots/leaderboard.png)
-
-### Menu bar widget (macOS)
-
-Native Swift app — `📊 157.3M` in the menu bar (today's count, resets at local midnight). Click for a popover with the same stat cards as the dashboard.
-
-![Menu bar](docs/screenshots/menubar-full.png)
-
-## Features
-
-- 📊 **Personal dashboard** — totals, daily trend (smooth area chart with Day/Week/Month/Total selector), GitHub-style activity heatmap, top models with % share
-- 🏆 **Org leaderboard** — week / month / all-time rankings, per-source columns, opt-in public profile
-- 📉 **Per-tool limits** — utilization bars for 5h and 7d windows, plan markers (Claude Max, ChatGPT Pro, etc.)
-- 🍎 **macOS menu bar widget** — native SwiftUI, today's count always visible, popover with full breakdown
-- 🌗 **Light / Dark / System** theme — proper dropdown, persisted, no flash on first paint
-- 🔒 **Generic OIDC SSO** — works with Google Workspace, Okta, Azure AD, Auth0, Keycloak, etc., or email + password
-- 🐳 **Docker Compose** — one-command deploy on a VM
-- 🔐 **Privacy invariant** — token counts only, never message content. Device tokens stored as sha256 hashes server-side. Optional nginx Bearer→hash proxy guard.
-
-## Supported AI tools
-
-| Tool               | Mechanism                                                                  | Status                                                                                   |
-| ------------------ | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| **Claude Code**    | `~/.claude/projects/*.jsonl` parser                                        | ✅ exact token counts                                                                    |
-| **Kiro**           | `~/Library/Application Support/kiro-cli/data.sqlite3` (`conversations_v2`) | ⚠️ estimated from prompt/response char length (Kiro doesn't expose token counts locally) |
-| **Codex CLI**      | `~/.codex/sessions/**/rollout-*.jsonl` parser                              | ✅ exact (when used)                                                                     |
-| **Gemini CLI**     | `~/.gemini/tmp/**/session-*.json` parser                                   | ✅ exact (when used)                                                                     |
-| **OpenCode**       | `~/.config/opencode/opencode.db` SQLite                                    | ✅ exact (when used)                                                                     |
-| **Cursor**         | `state.vscdb` auth + Cursor's usage API                                    | ⚠️ requires paid plan + keychain workaround                                              |
-| **GitHub Copilot** | `$COPILOT_OTEL_FILE_EXPORTER_PATH` JSONL                                   | ✅ when env var is set                                                                   |
-| **OpenRouter**     | API key + paginated `/api/v1/generation` poll                              | ✅ exact, runs every sync                                                                |
+Company-local token-usage tracker for Mumzworld. Self-hosted SaaS for monitoring AI tool token consumption across your engineering team.
 
 ## Architecture
 
-```
-                    ┌────────────────────────────┐
-Developer laptop    │  Browser dashboard         │
-┌────────────────┐  │  (React + Vite + Tailwind) │
-│ Claude/Codex/  │  │  ── OIDC login ──▶         │
-│ Cursor/Kiro/.. │  │                            │
-└──────┬─────────┘  └──────────┬─────────────────┘
-       │ hook fires            │ HTTPS
-       ▼                       │
-┌────────────────┐             │
-│ tokenboard     │             │
-│ CLI (Node 20)  │             │
-│ — parses logs  │             │
-│ — queue.jsonl  │             │
-│ — uploads      │             │
-└──────┬─────────┘             │
-       │ HTTPS Bearer          │
-       ▼                       ▼
-       ╔═══════════════════════════════════════╗
-       ║  Reverse proxy (nginx, port 443)      ║
-       ║   — TLS termination                   ║
-       ║   — /api/*  → API service             ║
-       ║   — /  → static dashboard             ║
-       ║   — Bearer→sha256 hash on /ingest     ║
-       ╚════════┬══════════════════┬═══════════╝
-                │                  │
-        ┌───────▼────────┐  ┌──────▼──────┐
-        │  API service   │  │  Static     │
-        │  Node 20 +     │  │  dashboard  │
-        │  Fastify       │  │  (React SPA)│
-        │  + JWT/OIDC    │  └─────────────┘
-        └───────┬────────┘
-                │
-        ┌───────▼────────┐         ┌────────────────────────┐
-        │   PostgreSQL   │         │ macOS menu bar widget  │
-        │  (partitioned  │         │ (SwiftUI native app,   │
-        │  by month)     │         │  reads /api/v1/usage/*)│
-        └────────────────┘         └────────────────────────┘
-```
+TokenBoard is a single-tenant system with four cooperating components:
 
-### Repo layout
+- **apps/web** — Next.js 16 dashboard + leaderboard + ingest API + auth (TypeScript, pnpm)
+- **apps/cli** — `tokenboard-cli` npm package for local token collection (Node 20, CommonJS)
+- **apps/menubar** — Native Swift macOS menu bar widget (optional)
+- **packages/contract** — Shared TypeScript types + half-hour bucket helpers
+
+### Data flow
 
 ```
-tokenboard/
-├── apps/
-│   ├── api/         Fastify + Kysely + Postgres backend (TypeScript)
-│   ├── dashboard/   React + Vite + Tailwind SPA (TypeScript)
-│   ├── cli/         tokenboard-cli npm package (Node 20, CommonJS)
-│   └── menubar/     Swift macOS menu bar app
-├── packages/
-│   └── shared/      Types shared between api and dashboard
-├── infra/
-│   ├── docker-compose.yml + nginx config + Makefile
-│   └── .env.example
-├── docs/
-│   ├── DEPLOY.md, CONFIG.md, API.md, CLI.md, SECURITY.md
-│   └── screenshots/
-└── package.json     npm workspaces root
+AI tools (Claude Code, Copilot, Cursor, etc.)
+   │ write to ~/.claude/projects/*.jsonl, ~/.cursor/*, etc.
+   ▼
+CLI parsers (incremental, cursor-based)
+   │ aggregate to ~/.tokenboard/queue.jsonl
+   ▼
+tokenboard sync → POST /api/v1/ingest (device-token auth)
+   │ idempotent upsert keyed by (user, device, source, model, half-hour UTC bucket)
+   ▼
+tb_usage_buckets (Postgres, partitioned by month)
+   │ pre-computed leaderboards (node-cron every 5 min)
+   ▼
+tb_leaderboard_snapshots (week / month / total)
 ```
+
+### Privacy invariant
+
+Only **token counts** and **timestamps** are uploaded — never prompts, responses, file contents, or filenames. Enforced at three layers:
+
+1. Parser code only reads token-count fields
+2. The shared `UsageBucket` type has no field for content
+3. API ingest validation rejects unknown fields
+
+### Auth model
+
+- **User JWT** (dashboard / menu bar): HS256 over `NEXTAUTH_SECRET`, 1-hour TTL
+- **Device token** (CLI): long-lived, sha256-hashed, issued via link-code exchange
+- **Link codes**: 6-char A-Z/2-9, 10-min TTL, single-use (CLI ↔ browser handshake)
+- **Development bypass**: `AUTH_BYPASS=true` skips external SSO (only for local dev)
+- **Production**: Wire Auth Desk SSO, set `AUTH_BYPASS=false`, configure `ALLOWED_EMAIL_DOMAINS=mumzworld.com`
 
 ## Quickstart
 
-### Server side (admin, once)
+### Prerequisites
+
+- Node 20+ (see `.nvmrc`)
+- Docker + Docker Compose (for containerized deployment)
+- pnpm (for local development)
+
+### Local development (no Docker)
+
+1. **Start Postgres:**
+
+   ```bash
+   docker run -d --name tokenboard-pg \
+     -e POSTGRES_USER=tokenboard \
+     -e POSTGRES_PASSWORD=devpw \
+     -e POSTGRES_DB=tokenboard \
+     -p 5432:5432 \
+     postgres:16-alpine
+   ```
+
+2. **Configure environment:**
+
+   ```bash
+   cd apps/web
+   cp .env.example .env
+   # Edit .env: set DATABASE_URL, AUTH_BYPASS=true, AUTH_BYPASS_EMAIL=dev@mumzworld.com
+   ```
+
+3. **Install dependencies and run migrations:**
+
+   ```bash
+   pnpm install
+   pnpm migrate
+   ```
+
+4. **Start dev server:**
+
+   ```bash
+   pnpm dev
+   # Dashboard available at http://localhost:3000
+   ```
+
+### Docker deployment (recommended)
+
+1. **Configure environment:**
+
+   ```bash
+   cd infra
+   cp .env.example .env
+   # Edit .env: set production secrets (NEXTAUTH_SECRET, POSTGRES_PASSWORD, etc.)
+   # IMPORTANT: For production, set AUTH_BYPASS=false and wire Auth Desk SSO
+   ```
+
+2. **Start services:**
+
+   ```bash
+   docker compose up --build -d
+   ```
+
+3. **Check logs:**
+
+   ```bash
+   docker compose logs -f web
+   ```
+
+4. **Dashboard available at http://localhost:3000**
+
+### CLI setup
+
+The CLI collects token usage from local AI tools and syncs to the backend.
+
+1. **Install:**
+
+   ```bash
+   npm install -g ./apps/cli
+   # Or: cd apps/cli && npm install -g .
+   ```
+
+2. **Link to backend:**
+
+   First, visit the dashboard and generate a link code, then:
+
+   ```bash
+   tokenboard init --link-code <6-char-code> --base-url http://localhost:3000
+   ```
+
+3. **Sync token usage:**
+
+   ```bash
+   tokenboard sync
+   # Parses local AI tool logs and uploads token counts to the backend
+   ```
+
+4. **Auto-sync (optional):**
+
+   Set up a cron job or systemd timer to run `tokenboard sync` every few minutes.
+
+### macOS menu bar widget (optional)
+
+Native Swift app for quick token stats.
+
+1. **Build and install:**
+
+   ```bash
+   cd apps/menubar
+   ./build.sh install
+   ```
+
+2. **View logs:**
+
+   ```bash
+   tail -f ~/Library/Logs/TokenBoardBar.log
+   ```
+
+3. **Uninstall:**
+
+   ```bash
+   ./build.sh uninstall
+   ```
+
+## Database
+
+- **Schema:** Postgres 16, all tables prefixed `tb_`
+- **Migrations:** Applied automatically on startup via `tsx src/lib/db/migrate.ts`
+- **Partitioning:** `tb_usage_buckets` partitioned by month (lazy-created per request)
+- **Leaderboard refresh:** node-cron every 5 min (disable with `LEADERBOARD_REFRESH_DISABLED=true` for multi-replica deploys)
+
+## Configuration
+
+Key environment variables (see `apps/web/.env.example` or `infra/.env.example`):
+
+- `DATABASE_URL` — Postgres connection string
+- `ALLOWED_EMAIL_DOMAINS` — Comma-separated (e.g., `mumzworld.com`)
+- `NEXTAUTH_SECRET` — HS256 JWT secret (generate: `openssl rand -base64 32`)
+- `LEADERBOARD_REFRESH_SECRET` — Secret for manual leaderboard refresh endpoint
+- `AUTH_BYPASS` — `true` for local dev (mock user), `false` for production (Auth Desk SSO)
+- `AUTH_BYPASS_EMAIL` — Mock user email when `AUTH_BYPASS=true`
+
+## Development
 
 ```bash
-git clone git@github.com:yogeshkathayat/Token-Board.git
-cd Token-Board/infra
-cp .env.example .env
-# Edit .env: PUBLIC_URL, DB_PASSWORD, JWT_SECRET (use `openssl rand -base64 48`),
-# OIDC_* if you want SSO, BOOTSTRAP_ADMIN_EMAIL.
-make setup
-make up
-make migrate
-```
+# Root monorepo commands
+pnpm install              # Bootstrap all workspaces
+pnpm test                 # Run all tests
+pnpm typecheck            # Typecheck all workspaces
 
-The stack now runs at `https://your-public-url`. See [`docs/DEPLOY.md`](docs/DEPLOY.md) for the full guide including TLS, OIDC, backups.
+# Web app (apps/web)
+cd apps/web
+pnpm dev                  # Dev server on :3000
+pnpm build                # Production build
+pnpm start                # Start standalone server
+pnpm migrate              # Apply DB migrations
+pnpm typecheck            # TypeScript check
 
-### Engineer side (per-laptop, one curl)
+# CLI (apps/cli)
+cd apps/cli
+npm test                  # Run tests
+npm link                  # Install globally for testing
 
-Open the dashboard, click **Settings → Devices → Generate code**, then paste the one-liner shown there into a terminal:
-
-```bash
-curl -fsSL https://your-public-url/install.sh?code=ABC234 | sh
-```
-
-The script installs the CLI globally (`npm install -g tokenboard-cli`), links the device using the baked-in code, installs hooks for every detected AI tool, and offers to start the background sync daemon. After this, every AI session you have automatically lands on the dashboard within ~30 seconds.
-
-### Local development
-
-If you'd rather poke at the stack locally before deploying:
-
-```bash
-git clone git@github.com:yogeshkathayat/Token-Board.git
-cd Token-Board
-npm install
-
-# Start postgres in Docker
-docker run -d --name tokenboard-pg \
-  -e POSTGRES_USER=tokenboard -e POSTGRES_PASSWORD=devpw -e POSTGRES_DB=tokenboard \
-  -p 54320:5432 postgres:16-alpine
-
-# Run migrations
-DATABASE_URL='postgres://tokenboard:devpw@localhost:54320/tokenboard' \
-  JWT_SECRET='local-dev-secret-32-bytes-aaaaaaaaaaaa' \
-  npm --workspace @tokenboard/api run migrate
-
-# Start API (terminal 1)
-DATABASE_URL='postgres://tokenboard:devpw@localhost:54320/tokenboard' \
-  JWT_SECRET='local-dev-secret-32-bytes-aaaaaaaaaaaa' \
-  PUBLIC_URL='http://localhost:5173' PORT=3001 \
-  npm --workspace @tokenboard/api run dev
-
-# Start dashboard (terminal 2)
-VITE_API_TARGET='http://localhost:3001' \
-  npm --workspace @tokenboard/dashboard run dev
-
-# Visit http://localhost:5173 — sign up with any email + password
-```
-
-## CLI
-
-```bash
-npm install -g tokenboard-cli   # or use the install.sh from the dashboard
-
-tokenboard init <BASE_URL>       # link this device, install hooks
-tokenboard link <CODE>           # short-form link (uses code from dashboard)
-tokenboard sync                  # parse all sources + upload (run by hooks/daemon)
-tokenboard status                # queue size, last sync, detected tools
-tokenboard doctor                # health check
-tokenboard daemon install        # background timer that syncs every 10 min
-tokenboard openrouter login      # paste your OpenRouter API key
-tokenboard uninstall             # remove all hooks + local state
-```
-
-State lives under `~/.tokenboard/` with 0600/0700 file modes. Override with `TOKENBOARD_HOME=/somewhere/else`. See [`docs/CLI.md`](docs/CLI.md) for the full reference.
-
-## Menu bar widget
-
-```bash
+# Menu bar (apps/menubar)
 cd apps/menubar
-./build.sh install
+./build.sh install        # Build + install
+./build.sh uninstall      # Remove
 ```
 
-Compiles the Swift binary (no Xcode project required, just `swiftc`), installs it to `~/Library/Application Support/TokenBoard/`, and registers a launchd agent at `~/Library/LaunchAgents/com.tokenboard.bar.plist` so it auto-starts on login.
+## Adding a new AI tool parser
 
-The bar shows today's token count (resets at local midnight). Click for a popover with stat cards, sources, and top models. See [`apps/menubar/README.md`](apps/menubar/README.md) for token-paste flow + troubleshooting.
+1. Write `apps/cli/src/parsers/<tool>.js` with `{source, detect, parse}`
+2. Register in `apps/cli/src/parsers/index.js`
+3. Add source name to `packages/contract/src/types.ts` (gates API validation)
+4. Add `<tool>_tokens` column to `tb_leaderboard_snapshots` + leaderboard service
+5. Write parser test asserting: (a) tokens captured, (b) no message content captured, (c) incremental parsing
 
-If `swift build` fails with "this SDK is not supported by the compiler" or "redefinition of module 'SwiftBridging'", your Command Line Tools are out of sync. The README has a one-line fix.
+## Production deployment checklist
 
-## API
-
-The backend exposes a small REST surface under `/api/v1/`. Highlights:
-
-| Endpoint                        | Auth          | Purpose                                        |
-| ------------------------------- | ------------- | ---------------------------------------------- |
-| `POST /auth/login`              | public        | email + password → access JWT + refresh cookie |
-| `GET /auth/oidc/start`          | public        | OIDC redirect (Google / Okta / etc.)           |
-| `POST /auth/link-code-init`     | user JWT      | generate a 6-char code for CLI handshake       |
-| `POST /auth/link-code-exchange` | public        | CLI swaps code → device token                  |
-| `POST /ingest`                  | device token  | upload half-hour buckets (idempotent upsert)   |
-| `GET /usage/summary`            | user JWT      | totals over a date range                       |
-| `GET /usage/daily`              | user JWT      | daily breakdown                                |
-| `GET /usage/heatmap`            | user JWT      | 52-week activity grid                          |
-| `GET /usage/model-breakdown`    | user JWT      | per-source × per-model                         |
-| `GET /leaderboard`              | optional auth | ranked users with per-source columns           |
-| `GET/POST /public-visibility`   | user JWT      | privacy opt-in toggle                          |
-| `GET /healthz`                  | public        | health check                                   |
-
-Full reference: [`docs/API.md`](docs/API.md).
-
-## Deploy
-
-Production: [`docs/DEPLOY.md`](docs/DEPLOY.md). Single-VM Docker Compose stack with:
-
-- **db**: postgres:16-alpine (volume-backed)
-- **api**: Fastify on Node 20
-- **dashboard**: nginx serving the built React SPA
-- **proxy**: nginx with TLS + njs Bearer→sha256 hashing on `/ingest` (defense in depth)
-
-A `Makefile` wraps the common commands (`make up`, `make logs`, `make migrate`, `make backup`, `make restore`).
-
-## Tech stack
-
-- **Backend**: Node 20, [Fastify 5](https://fastify.dev/), [Kysely](https://kysely.dev/) (type-safe SQL), [argon2](https://github.com/ranisalt/node-argon2), [openid-client](https://github.com/panva/node-openid-client)
-- **Frontend**: React 18, [Vite 5](https://vitejs.dev/), [Tailwind CSS 3](https://tailwindcss.com/), [React Router 7](https://reactrouter.com/)
-- **CLI**: Node 20 CommonJS, [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) (optional)
-- **Menu bar**: Swift 5.9+, SwiftUI, AppKit
-- **Database**: PostgreSQL 16 with month-partitioned `tb_usage_buckets`
-- **Tests**: 33 across CLI / API / shared package — `node --test` + `vitest`
-
-## Privacy & security
-
-- Only token counts and timestamps are uploaded. Never prompts, responses, file contents, or filenames. Enforced at the parser layer in `apps/cli/src/parsers/*.js` and at the API ingest validator.
-- Device tokens are sha256-hashed before being stored. Optional nginx njs handler hashes the bearer at the proxy edge so device tokens never appear in API logs.
-- Refresh tokens, passwords, and device tokens all hashed with argon2id / sha256 at rest.
-- OIDC with state + PKCE + nonce validation.
-- Rate limiting: 60/hour/IP on `/auth/*`, 300/min/device on `/ingest`.
-- Optional email-domain allowlist (`ALLOWED_EMAIL_DOMAINS=acme.com,acme.io`).
-
-See [`docs/SECURITY.md`](docs/SECURITY.md) for the full threat model.
-
-## Contributing
-
-```bash
-nvm use                    # picks up .nvmrc → Node 20
-npm install
-npm test                   # runs all workspace tests
-```
-
-Conventions:
-
-- Prettier + 2-space indent, semicolons + single quotes (TS), CommonJS in CLI
-- Strict TypeScript everywhere it's used
-- Default to no comments — only add WHY a line exists, never WHAT
-- Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `ci:`
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for adding a new parser, hook, or page.
+- [ ] Set `AUTH_BYPASS=false`
+- [ ] Wire Auth Desk SSO (set `NEXT_PUBLIC_AUTH_DESK_URL`, `AUTH_DESK_API_URL`, etc.)
+- [ ] Set strong `NEXTAUTH_SECRET` and `LEADERBOARD_REFRESH_SECRET`
+- [ ] Set strong `POSTGRES_PASSWORD`
+- [ ] Configure `ALLOWED_EMAIL_DOMAINS=mumzworld.com`
+- [ ] Set `NODE_ENV=production`
+- [ ] Configure persistent volume for Postgres data
+- [ ] Set up backups for `tokenboard-pgdata` volume
+- [ ] Configure monitoring (logs, metrics, alerts)
+- [ ] Set up HTTPS / reverse proxy (nginx, Caddy, etc.)
+- [ ] For multi-replica deploys: set `LEADERBOARD_REFRESH_DISABLED=true` on all but one replica
 
 ## License
 
-MIT. The architecture and core data model is inspired by the open-source pieces of [TokenTracker](https://github.com/mm7894215/TokenTracker); the Token Board name, multi-tenant model, OpenRouter integration, native menu bar app, and per-source leaderboard are net-new in this fork.
+Proprietary — Mumzworld internal use only.

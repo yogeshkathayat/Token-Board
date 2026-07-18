@@ -1,42 +1,83 @@
+# Node.js
 node_modules/
-dist/
-build/
-.next/
-.turbo/
-coverage/
-.env
-.env.*
-!.env.example
-*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+lerna-debug.log*
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# TypeScript
+*.tsbuildinfo
+.tsbuildinfo
+
+# Testing
+coverage/
+
+# Logs
+*.log
+logs/
+
+# macOS
 .DS_Store
-Thumbs.db
+.AppleDouble
+.LSOverride
+._*
+
+# Swift / macOS menu bar
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
+.build/
+.swiftpm/
+*.app
+
+# Editors
 .vscode/
-!.vscode/settings.json
-!.vscode/extensions.json
-!.vscode/launch.json
 .idea/
 *.swp
 *.swo
 *~
-infra/certs/
-infra/backups/
-infra/data/
-*.tsbuildinfo
-.cache/
-# macOS menu bar build artifacts
-apps/menubar/.build/
-# Generated CLI artifacts
-apps/cli/.build/
-# Local plan files
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Better-sqlite3
+better-sqlite3/
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Package manager locks (keep pnpm-lock.yaml in apps/web)
+package-lock.json
+yarn.lock
+
+# CLI local state (user-specific, never committed)
+.tokenboard/
+
+# Local Claude Code tooling (not part of the product)
+.agents/
 .claude/
-# Local secrets (never committed)
-**/secrets/
-*.pem
-*.key
-# Tokens and JWTs (should never end up in tracked files)
-**/token
-**/*-jwt.txt
+skills-lock.json

@@ -1,61 +1,59 @@
-name: tokenboard
-
 services:
   db:
     image: postgres:16-alpine
-    restart: unless-stopped
+    container_name: tokenboard-db
     environment:
-      POSTGRES_USER: ${DB_USER:-tokenboard}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME:-tokenboard}
+      POSTGRES_USER: tokenboard
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: tokenboard
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - tokenboard-pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-tokenboard} -d ${DB_NAME:-tokenboard}']
-      interval: 10s
-      timeout: 5s
+      test: ["CMD-SHELL", "pg_isready -U tokenboard"]
+      interval: 5s
+      timeout: 3s
       retries: 5
+    networks:
+      - tokenboard
 
-  api:
-    image: ghcr.io/${ORG:-tokenboard}/tokenboard-api:${VERSION:-latest}
-    restart: unless-stopped
-    environment:
-      NODE_ENV: production
-      DATABASE_URL: postgres://${DB_USER:-tokenboard}:${DB_PASSWORD}@db:5432/${DB_NAME:-tokenboard}
-      JWT_SECRET: ${JWT_SECRET}
-      PUBLIC_URL: ${PUBLIC_URL}
-      OIDC_ISSUER: ${OIDC_ISSUER:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
-      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
-      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-}
-      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
-      ALLOW_PASSWORD_SIGNUP: ${ALLOW_PASSWORD_SIGNUP:-true}
-      SLOW_QUERY_MS: ${SLOW_QUERY_MS:-2000}
-      USAGE_MAX_DAYS: ${USAGE_MAX_DAYS:-800}
-      LEADERBOARD_REFRESH_DISABLED: ${LEADERBOARD_REFRESH_DISABLED:-false}
+  web:
+    build:
+      context: ../apps/web
+      dockerfile: ../../infra/Dockerfile
+    container_name: tokenboard-web
     depends_on:
       db:
         condition: service_healthy
-
-  dashboard:
-    image: ghcr.io/${ORG:-tokenboard}/tokenboard-dashboard:${VERSION:-latest}
-    restart: unless-stopped
-
-  proxy:
-    image: nginx:alpine
-    restart: unless-stopped
-    ports:
-      - '80:80'
-      - '443:443'
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ingest.njs:/etc/nginx/ingest.njs:ro
-      - ./certs:/etc/nginx/certs:ro
     environment:
-      INGEST_BEARER_HASH: ${INGEST_BEARER_HASH:-true}
-      TLS_DISABLED: ${TLS_DISABLED:-false}
-    depends_on: [api, dashboard]
+      DATABASE_URL: postgres://tokenboard:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/tokenboard
+      ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-mumzworld.com}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?set NEXTAUTH_SECRET in .env (openssl rand -base64 32)}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXT_PUBLIC_NEXTAUTH_URL: ${NEXT_PUBLIC_NEXTAUTH_URL:-http://localhost:3000}
+      LEADERBOARD_REFRESH_SECRET: ${LEADERBOARD_REFRESH_SECRET:?set LEADERBOARD_REFRESH_SECRET in .env}
+      LEADERBOARD_REFRESH_DISABLED: ${LEADERBOARD_REFRESH_DISABLED:-false}
+      AUTH_BYPASS: ${AUTH_BYPASS:-false}
+      # Required IN ADDITION to AUTH_BYPASS to enable bypass on a production image (insecure demo).
+      AUTH_BYPASS_ALLOW_IN_PROD: ${AUTH_BYPASS_ALLOW_IN_PROD:-false}
+      AUTH_BYPASS_EMAIL: ${AUTH_BYPASS_EMAIL:-dev@mumzworld.com}
+      LOGGER_LEVEL: ${LOGGER_LEVEL:-info}
+      NODE_ENV: ${NODE_ENV:-production}
+      DESK_SLUG: ${DESK_SLUG:-tokenboard}
+      NEXT_PUBLIC_DESK_SLUG: ${NEXT_PUBLIC_DESK_SLUG:-tokenboard}
+      DESK_NAME: ${DESK_NAME:-TokenBoard}
+      NEXT_PUBLIC_DESK_NAME: ${NEXT_PUBLIC_DESK_NAME:-TokenBoard}
+    ports:
+      - "3000:3000"
+    networks:
+      - tokenboard
+    restart: unless-stopped
 
 volumes:
-  pgdata:
+  tokenboard-pgdata:
+    name: tokenboard-pgdata
+
+networks:
+  tokenboard:
+    name: tokenboard

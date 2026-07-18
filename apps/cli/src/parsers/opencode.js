@@ -1,86 +1,129 @@
 'use strict';
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
+const { userHome } = require('../lib/tracker-paths');
 
-const cursors = require('../lib/cursors.js');
-const { BucketAggregator } = require('../lib/buckets.js');
+const source = 'opencode';
+const DEFAULT_MODEL = 'unknown';
 
-const SOURCE = 'opencode';
-
-/**
- * OpenCode persists usage in a SQLite database. We read incrementally by
- * `id > lastRowId`. better-sqlite3 is an optional dep; if it's not present,
- * we silently skip OpenCode rather than failing the whole sync.
- */
-
-function dbPath() {
-  return path.join(os.homedir(), '.config', 'opencode', 'opencode.db');
-}
-
-async function detect() {
-  try {
-    return fs.statSync(dbPath()).isFile();
-  } catch {
-    return false;
-  }
-}
-
-let Database;
 function loadSqlite() {
-  if (Database === undefined) {
-    try {
-      Database = require('better-sqlite3');
-    } catch {
-      Database = null;
-    }
-  }
-  return Database;
-}
-
-async function parse() {
-  const sqlite = loadSqlite();
-  if (!sqlite) {
-    if (process.env.TOKENBOARD_DEBUG) {
-      process.stderr.write('[opencode] better-sqlite3 not installed; skipping\n');
-    }
-    return [];
-  }
-
-  const state = cursors.get(SOURCE);
-  state.lastRowId = state.lastRowId || 0;
-
-  const db = new sqlite(dbPath(), { readonly: true, fileMustExist: true });
-  let rows = [];
   try {
-    rows = db
-      .prepare(
-        `select id, created_at, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
-         from usage where id > ? order by id asc limit 5000`,
-      )
-      .all(state.lastRowId);
+    return require('better-sqlite3');
   } catch {
-    db.close();
-    return [];
+    return null;
   }
-  db.close();
-
-  const agg = new BucketAggregator();
-  let maxId = state.lastRowId;
-  for (const r of rows) {
-    if (r.id > maxId) maxId = r.id;
-    if (!r.created_at) continue;
-    agg.add(SOURCE, r.model || 'unknown', r.created_at, {
-      input_tokens: r.input_tokens || 0,
-      output_tokens: r.output_tokens || 0,
-      cached_input_tokens: r.cache_read_tokens || 0,
-      cache_creation_input_tokens: r.cache_write_tokens || 0,
-    });
-  }
-  state.lastRowId = maxId;
-  cursors.set(SOURCE, state);
-  return agg.values();
 }
 
-module.exports = { source: SOURCE, detect, parse };
+function dataDir() {
+  if (process.env.OPENCODE_HOME) return process.env.OPENCODE_HOME;
+  if (process.env.XDG_DATA_HOME) return path.join(process.env.XDG_DATA_HOME, 'opencode');
+  return path.join(userHome(), '.local', 'share', 'opencode');
+}
+
+function isOpencodeDbFilename(name) {
+  if (!name.endsWith('.db')) return false;
+  const stem = name.slice(0, -3);
+  if (stem === 'opencode') return true;
+  if (!stem.startsWith('opencode-')) return false;
+  const channel = stem.slice('opencode-'.length);
+  return channel.length > 0 && /^[A-Za-z0-9._-]+$/.test(channel);
+}
+
+function findDbPath() {
+  if (process.env.OPENCODE_DB) {
+    try {
+      if (fs.statSync(process.env.OPENCODE_DB).isFile()) return process.env.OPENCODE_DB;
+    } catch {
+      return null;
+    }
+  }
+  const dir = dataDir();
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const match = entries.find((e) => e.isFile() && isOpencodeDbFilename(e.name));
+  return match ? path.join(dir, match.name) : null;
+}
+
+function detect() {
+  if (!loadSqlite()) return false;
+  return Boolean(findDbPath());
+}
+
+function toInt(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+}
+
+async function parse({ cursors, aggregate }) {
+  const Database = loadSqlite();
+  if (!Database) return;
+  const file = findDbPath();
+  if (!file) return;
+
+  const state = cursors.opencode && typeof cursors.opencode === 'object' ? cursors.opencode : {};
+  const sinceTime = toInt(state.lastTimeUpdated);
+  let db;
+  try {
+    db = new Database(file, { readonly: true, fileMustExist: true });
+  } catch {
+    return;
+  }
+
+  try {
+    const rows = db
+      .prepare(
+        "SELECT id, time_updated, data FROM message WHERE json_extract(data, '$.role') = 'assistant' AND time_updated > ? ORDER BY time_updated ASC",
+      )
+      .all(sinceTime);
+    let maxTime = sinceTime;
+    for (const row of rows) {
+      const t = toInt(row.time_updated);
+      if (t > maxTime) maxTime = t;
+      let data;
+      try {
+        data = JSON.parse(row.data);
+      } catch {
+        continue;
+      }
+      const tokens = data && data.tokens;
+      if (!tokens || typeof tokens !== 'object') continue;
+      const input = toInt(tokens.input);
+      const output = toInt(tokens.output);
+      const reasoning = toInt(tokens.reasoning);
+      const cacheRead = toInt(tokens.cache && tokens.cache.read);
+      const cacheWrite = toInt(tokens.cache && tokens.cache.write);
+      if (input + output + reasoning + cacheRead + cacheWrite === 0) continue;
+      const tsMs = t > 0 ? (t < 1e12 ? t * 1000 : t) : Date.now();
+      const ts = new Date(tsMs).toISOString();
+      const delta = {
+        input_tokens: input,
+        cached_input_tokens: cacheRead,
+        cache_creation_input_tokens: cacheWrite,
+        output_tokens: output,
+        reasoning_output_tokens: reasoning,
+        total_tokens: input + output + reasoning + cacheRead + cacheWrite,
+      };
+      const model =
+        (typeof data.modelID === 'string' && data.modelID) ||
+        (typeof data.model === 'string' && data.model) ||
+        DEFAULT_MODEL;
+      aggregate(source, model, ts, delta, 1);
+    }
+    cursors.opencode = { ...state, lastTimeUpdated: maxTime };
+  } catch {
+    /* best effort */
+  } finally {
+    try {
+      db.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+module.exports = { source, detect, parse };

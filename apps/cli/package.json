@@ -1,34 +1,23 @@
 {
   "name": "tokenboard-cli",
   "version": "0.1.0",
-  "description": "Self-hosted AI token usage tracker CLI",
-  "license": "MIT",
+  "description": "TokenBoard CLI — collects local AI token-usage counts and uploads half-hour buckets.",
   "type": "commonjs",
-  "main": "src/cli.js",
   "bin": {
-    "tokenboard": "bin/tracker.js",
-    "tokenboard-cli": "bin/tracker.js"
-  },
-  "files": [
-    "bin/",
-    "src/",
-    "README.md",
-    "LICENSE"
-  ],
-  "scripts": {
-    "test": "node --test test/*.test.js",
-    "lint": "node -e \"require('fs').readdirSync('src/lib', {recursive:true})\""
+    "tokenboard": "bin/tokenboard.js"
   },
   "engines": {
     "node": ">=20"
   },
-  "dependencies": {
-    "better-sqlite3": "11.3.0"
+  "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
+    "typecheck": "true"
   },
   "optionalDependencies": {
-    "keytar": "7.9.0"
+    "better-sqlite3": "^11.0.0"
   },
-  "publishConfig": {
-    "access": "public"
-  }
+  "files": [
+    "bin",
+    "src"
+  ]
 }
