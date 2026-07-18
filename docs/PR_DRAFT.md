@@ -5,18 +5,14 @@
 
 ## What & why
 
-Rebuilds `tokenboard` as a **company-internal, self-hostable** AI token-usage tracker for
-Mumzworld — the global TokenTracker sends data to a shared cloud; this keeps everything on
-infra we deploy, scoped to `@mumzworld.com`. Three surfaces + shared contract:
+Rebuilds `tokenboard` as a **company-internal, self-hostable** AI token-usage tracker — a single-tenant system that keeps everything on infrastructure you deploy, scoped to your organization's email domains. Three surfaces + shared contract:
 
 - **`apps/web`** — Dockerized Next.js backend: auth + ingest API + company leaderboard + dashboard UI
 - **`apps/cli`** — `tokenboard-cli` local collector for Claude / Codex / Gemini / Kiro / OpenCode / Cursor
-- **`apps/menubar`** — native macOS menu bar widget
+- **`apps/menubar`** — native macOS menu bar widget (local-first, no server)
 - **`packages/contract`** + **`infra`** — ingest contract; Dockerfile + compose
 
-Built on `NextDeskStarterKit` (UI + auth client) with the data model ported from
-`TokenTrackerAPI`. Privacy invariant preserved: **only token counts + timestamps are collected**,
-never prompts, responses, or filenames (enforced structurally + tested).
+Built on Next.js 16 (App Router) for UI + auth, with a streamlined data model for half-hour bucketing and leaderboard ranking. Privacy invariant preserved: **only token counts + timestamps are collected**, never prompts, responses, or filenames (enforced structurally + tested).
 
 ## How it works
 
@@ -25,9 +21,7 @@ AI tools → CLI parsers → ~/.tokenboard/queue.jsonl → POST /api/ingest (dev
   → Postgres tb_usage_buckets → 5-min cron → tb_leaderboard_snapshots → dashboard + leaderboard
 ```
 
-Auth: browser users via Auth Desk SSO (currently `AUTH_BYPASS` for dev; integration point wired
-for later). CLI uses long-lived hashed **device tokens**, paired via a 6-char **link code** minted
-in the dashboard.
+Auth: browser users via Auth Desk SSO (currently `AUTH_BYPASS` for dev; integration point wired for later). CLI uses long-lived hashed **device tokens**, paired via a 6-char **link code** minted in the dashboard.
 
 ## Verification
 
