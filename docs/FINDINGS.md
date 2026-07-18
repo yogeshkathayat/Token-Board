@@ -14,7 +14,7 @@ Produced by an autonomous build + review pass. Findings were raised by parallel 
 | Contract parity | ✅ 5/5 |
 | macOS menu bar `swiftc` build | ✅ compiles + install/uninstall verified |
 | `docker compose config` | ✅ validates |
-| **Live DB end-to-end (ingest→leaderboard)** | ⛔ **NOT RUN** — Docker daemon unresponsive in the build environment |
+| **Live DB end-to-end (ingest→leaderboard)** | ✅ **PASS** — real Postgres + `migrate.mjs` + standalone server: device-token → ingest → refresh → leaderboard → usage round-trip; bad boundary → 400, unauth → 401, prod-bypass correctly refused without the explicit flag |
 
 ## Fixed in this pass
 
@@ -30,8 +30,8 @@ fail-fast compose secrets; CLI queue compaction after full drain.
 ## Open findings (recommended for a follow-up fix round)
 
 ### Must-do before real production use
-1. **Run the live DB end-to-end** and add it to CI. Not exercised here (no Docker). Verify
-   `POST /api/ingest` → `tb_usage_buckets` → refresh → `GET /api/leaderboard` + `/api/usage/summary`.
+1. ✅ **Live DB end-to-end — DONE** (2026-07-18). Full round-trip verified against real
+   Postgres. Still worth adding as a CI job so it runs on every change.
 2. **Wire real Auth Desk SSO** and set `AUTH_BYPASS=false` (drop `AUTH_BYPASS_ALLOW_IN_PROD`).
    Until then the Docker deploy runs as an insecure single-user demo.
 

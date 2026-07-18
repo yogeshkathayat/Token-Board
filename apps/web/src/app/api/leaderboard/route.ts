@@ -73,7 +73,8 @@ export async function GET(req: NextRequest) {
     to_day: string;
   }>(
     `SELECT user_id, rank, claude_tokens, codex_tokens, cursor_tokens, kiro_tokens, gemini_tokens, opencode_tokens, other_tokens,
-            total_tokens, estimated_cost_usd, display_name, avatar_url, is_public, generated_at, from_day, to_day
+            total_tokens, estimated_cost_usd, display_name, avatar_url, is_public, generated_at,
+            from_day::text AS from_day, to_day::text AS to_day
      FROM tb_leaderboard_snapshots
      WHERE period = $1
        AND to_day = (SELECT max(to_day) FROM tb_leaderboard_snapshots WHERE period = $1)
