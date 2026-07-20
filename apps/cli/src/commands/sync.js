@@ -8,7 +8,7 @@ const { appendBucket, pendingBytes } = require('../lib/queue');
 const { runAll } = require('../parsers');
 const { drainQueueToCloud } = require('../lib/uploader');
 const { writeLocalSummary } = require('../lib/summary');
-const { claudeUploadBuckets } = require('../lib/statscache');
+const { readClaudeDaily, claudeUploadBuckets } = require('../lib/statscache');
 
 const LOCK_STALE_MS = 15 * 60_000;
 
@@ -70,16 +70,20 @@ async function run(argv) {
         config,
         enqueue: (row) => appendBucket(row),
       });
-      // Claude daily buckets: stats-cache history + today/recent from live logs. Enqueued
-      // every run (today changes as you work); the server upsert keeps it idempotent per
-      // (day, model).
+      // Claude daily buckets come from ~/.claude/stats-cache.json (Claude's own numbers).
+      // Re-enqueue only when the cache changed; the server upsert keeps it idempotent.
       try {
-        let n = 0;
-        for (const b of claudeUploadBuckets()) {
-          appendBucket(b);
-          n += 1;
+        const { mtimeMs } = readClaudeDaily();
+        const prev = (cursors.statsCacheClaude && cursors.statsCacheClaude.mtimeMs) || 0;
+        if (mtimeMs > 0 && mtimeMs !== prev) {
+          let n = 0;
+          for (const b of claudeUploadBuckets()) {
+            appendBucket(b);
+            n += 1;
+          }
+          cursors.statsCacheClaude = { mtimeMs };
+          out.write(`Queued ${n} Claude daily bucket(s) from stats-cache.\n`);
         }
-        out.write(`Queued ${n} Claude daily bucket(s).\n`);
       } catch {
         /* non-fatal */
       }
