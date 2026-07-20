@@ -60,7 +60,7 @@ build() {
 
   echo "-> swiftc -O Sources/*.swift"
   swiftc -O \
-    -framework AppKit -framework SwiftUI -framework Combine \
+    -framework AppKit -framework SwiftUI -framework Combine -framework Charts \
     -o "$APP_BUNDLE/Contents/MacOS/$PRODUCT" \
     Sources/*.swift
 
