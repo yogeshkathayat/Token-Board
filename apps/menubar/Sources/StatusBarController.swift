@@ -75,7 +75,7 @@ final class StatusBarController: NSObject {
         applyLogo(to: button)
         let prefix = logoImage != nil ? " " : "TB "
         if let summary = popoverModel.summary {
-            button.title = "\(prefix)\(TokenFormat.compact(summary.todayTokens))"
+            button.title = "\(prefix)\(TokenFormat.compact(summary.d7Tokens))"
         } else {
             button.title = "\(prefix)—"
         }

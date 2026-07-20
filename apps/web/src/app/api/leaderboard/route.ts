@@ -9,29 +9,15 @@ function getPeriodWindow(period: Period): { fromDay: string; toDay: string } {
   const now = new Date();
   const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
-  if (period === 'week') {
-    const mondayThisWeek = new Date(todayUTC);
-    const dayOfWeek = mondayThisWeek.getUTCDay();
-    const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    mondayThisWeek.setUTCDate(mondayThisWeek.getUTCDate() - diffToMonday);
-    return {
-      fromDay: mondayThisWeek.toISOString().split('T')[0],
-      toDay: todayUTC.toISOString().split('T')[0],
-    };
-  }
-
-  if (period === 'month') {
-    const firstOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    return {
-      fromDay: firstOfMonth.toISOString().split('T')[0],
-      toDay: todayUTC.toISOString().split('T')[0],
-    };
-  }
-
-  return {
-    fromDay: '1970-01-01',
-    toDay: todayUTC.toISOString().split('T')[0],
+  const toDay = todayUTC.toISOString().split('T')[0];
+  const daysAgo = (n: number) => {
+    const d = new Date(todayUTC);
+    d.setUTCDate(d.getUTCDate() - n);
+    return d.toISOString().split('T')[0];
   };
+  if (period === 'week') return { fromDay: daysAgo(6), toDay }; // last 7 days
+  if (period === 'month') return { fromDay: daysAgo(29), toDay }; // last 30 days
+  return { fromDay: '1970-01-01', toDay };
 }
 
 export async function GET(req: NextRequest) {

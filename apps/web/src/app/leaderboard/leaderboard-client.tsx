@@ -89,8 +89,8 @@ function RankBadge({ rank }: { rank: number }) {
 }
 
 const PERIOD_LABELS: Record<Period, string> = {
-  week: 'This Week',
-  month: 'This Month',
+  week: 'Last 7 Days',
+  month: 'Last 30 Days',
   total: 'All Time',
 };
 
@@ -257,10 +257,10 @@ export function LeaderboardClient() {
         <Tabs value={period} onValueChange={(v) => setPeriod(v as Period)}>
           <TabsList className="bg-muted/50">
             <TabsTrigger value="week" className="data-[state=active]:bg-background">
-              Week
+              Last 7 Days
             </TabsTrigger>
             <TabsTrigger value="month" className="data-[state=active]:bg-background">
-              Month
+              Last 30 Days
             </TabsTrigger>
             <TabsTrigger value="total" className="data-[state=active]:bg-background">
               All Time

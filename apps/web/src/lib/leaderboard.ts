@@ -13,32 +13,18 @@ interface LeaderboardPeriod {
 function getPeriodWindows(): LeaderboardPeriod[] {
   const now = new Date();
   const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-
-  const mondayThisWeek = new Date(todayUTC);
-  const dayOfWeek = mondayThisWeek.getUTCDay();
-  const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-  mondayThisWeek.setUTCDate(mondayThisWeek.getUTCDate() - diffToMonday);
-
-  const firstOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-
-  const epoch = new Date('1970-01-01T00:00:00.000Z');
+  const toDay = todayUTC.toISOString().split('T')[0];
+  const daysAgo = (n: number) => {
+    const d = new Date(todayUTC);
+    d.setUTCDate(d.getUTCDate() - n);
+    return d.toISOString().split('T')[0];
+  };
 
   return [
-    {
-      period: 'week',
-      fromDay: mondayThisWeek.toISOString().split('T')[0],
-      toDay: todayUTC.toISOString().split('T')[0],
-    },
-    {
-      period: 'month',
-      fromDay: firstOfMonth.toISOString().split('T')[0],
-      toDay: todayUTC.toISOString().split('T')[0],
-    },
-    {
-      period: 'total',
-      fromDay: epoch.toISOString().split('T')[0],
-      toDay: todayUTC.toISOString().split('T')[0],
-    },
+    // "week" = rolling last 7 days (incl. today); "month" = rolling last 30 days.
+    { period: 'week', fromDay: daysAgo(6), toDay },
+    { period: 'month', fromDay: daysAgo(29), toDay },
+    { period: 'total', fromDay: '1970-01-01', toDay },
   ];
 }
 

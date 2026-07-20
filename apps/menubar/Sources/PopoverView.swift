@@ -88,20 +88,15 @@ struct PopoverView: View {
     }
 
     private func statusPillText(_ summary: UsageSummary) -> String {
-        let today = summary.todayTokens
-        let avg = summary.avgPerDay30Tokens
-        if today <= 0 { return "\u{1F4A4} No usage yet today" }
-        if avg <= 0 { return "\u{26A1} Active today" }
-        if today >= (avg * 3) / 2 { return "\u{1F680} Heavy usage today!" }
-        if today >= avg / 2 { return "\u{26A1} Active today" }
-        return "\u{1F642} Light usage today"
+        let d7 = summary.d7Tokens
+        if d7 <= 0 { return "\u{1F4A4} No recent usage" }
+        return "\u{1F680} \(TokenFormat.compact(d7)) in the last 7 days"
     }
 
     // MARK: - KPI row
 
     private func kpiRow(_ s: UsageSummary) -> some View {
         HStack(spacing: 8) {
-            KPICard(title: "Today", value: TokenFormat.compact(s.todayTokens), subtitle: TokenFormat.cost(s.cost.today))
             KPICard(title: "7-Day", value: TokenFormat.compact(s.d7Tokens), subtitle: "\(s.activeDays7) active days")
             KPICard(title: "30-Day", value: TokenFormat.compact(s.d30Tokens), subtitle: "~\(TokenFormat.compact(s.avgPerDay30Tokens))/day")
             KPICard(title: "Total", value: TokenFormat.compact(s.totalTokens), subtitle: TokenFormat.cost(s.cost.total))
