@@ -144,7 +144,7 @@ export function DashboardClient() {
           className="border-l-4 border-l-emerald-500/50"
         />
         <KPICard
-          title="This Week"
+          title="Last 7 Days"
           value={formatTokens(weekTokens)}
           description="tokens"
           icon={TrendingUp}
@@ -152,7 +152,7 @@ export function DashboardClient() {
           className="border-l-4 border-l-blue-500/50"
         />
         <KPICard
-          title="This Month"
+          title="Last 30 Days"
           value={formatTokens(monthTokens)}
           description="tokens"
           icon={Activity}

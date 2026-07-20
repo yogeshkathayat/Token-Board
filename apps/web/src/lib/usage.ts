@@ -45,6 +45,12 @@ interface UsageSummary {
   last30: Array<{ day: string; total_tokens: string }>;
 }
 
+// Start of the day `days-1` days before today, in `tz` (rolling "last N days" incl. today).
+function lastNDaysStartExpr(tz: string, days: number): string {
+  const n = Math.max(1, Math.floor(days));
+  return `(date_trunc('day', now() AT TIME ZONE '${tz}') - interval '${n - 1} days') AT TIME ZONE '${tz}'`;
+}
+
 async function sumSince(userId: string, sinceExpr: string): Promise<string> {
   const rows = await query<{ total_tokens: string }>(
     `SELECT COALESCE(sum(total_tokens), 0)::text AS total_tokens
@@ -59,8 +65,8 @@ export async function getUsageSummary(userId: string, tz?: string): Promise<Usag
   const zone = safeTz(tz);
 
   const today = await sumSince(userId, startExpr(zone, 'day'));
-  const week = await sumSince(userId, startExpr(zone, 'week'));
-  const month = await sumSince(userId, startExpr(zone, 'month'));
+  const week = await sumSince(userId, lastNDaysStartExpr(zone, 7)); // last 7 days (rolling)
+  const month = await sumSince(userId, lastNDaysStartExpr(zone, 30)); // last 30 days (rolling)
   const totalRows = await query<{ total_tokens: string }>(
     `SELECT COALESCE(sum(total_tokens), 0)::text AS total_tokens
        FROM tb_usage_buckets WHERE user_id = $1`,
