@@ -7,9 +7,9 @@
 // per-(day, model) view. All computed in the machine's LOCAL timezone.
 
 const fs = require('node:fs');
-const path = require('node:path');
-const { paths, userHome } = require('./tracker-paths');
+const { paths } = require('./tracker-paths');
 const { loadCursors } = require('./cursors');
+const { readClaudeDaily } = require('./statscache');
 
 // Rough blended $/1M-token rates for a cost estimate (best-effort, not billing-accurate).
 const RATES = [
@@ -52,30 +52,12 @@ function dayKeyMinus(now, days) {
 }
 
 function readStatsCacheClaude() {
-  const p = path.join(userHome(), '.claude', 'stats-cache.json');
-  let raw;
-  try {
-    raw = fs.readFileSync(p, 'utf8');
-  } catch {
-    return [];
-  }
-  let j;
-  try {
-    j = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  const out = [];
-  const dmt = Array.isArray(j.dailyModelTokens) ? j.dailyModelTokens : [];
-  for (const row of dmt) {
-    const date = row && typeof row.date === 'string' ? row.date : null;
-    if (!date) continue;
-    const byModel = (row && row.tokensByModel) || {};
-    for (const model of Object.keys(byModel)) {
-      out.push({ date, source: 'claude', model, tokens: toInt(byModel[model]) });
-    }
-  }
-  return out;
+  return readClaudeDaily().records.map((r) => ({
+    date: r.date,
+    source: 'claude',
+    model: r.model,
+    tokens: r.tokens,
+  }));
 }
 
 function readLiveNonClaude(cursors) {

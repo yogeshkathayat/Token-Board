@@ -2,8 +2,11 @@
 
 const { halfHourFloor, bucketKey, initTotals, addTotals } = require('../lib/buckets');
 
+// NOTE: Claude is intentionally NOT here. Claude usage comes from Claude Code's own
+// aggregate (~/.claude/stats-cache.json) via src/lib/statscache.js, uploaded as daily
+// buckets in the sync command. That's the authoritative, full-history, Claude-matching
+// source; parsing the live logs would double-count and drift from Claude's numbers.
 const PARSERS = [
-  require('./claude'),
   require('./codex'),
   require('./gemini'),
   require('./cursor'),
