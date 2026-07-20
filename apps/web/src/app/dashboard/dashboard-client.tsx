@@ -12,6 +12,7 @@ interface UsageTotals {
   today: string;
   week: string;
   month: string;
+  calMonth: string;
   total: string;
 }
 
@@ -102,9 +103,9 @@ export function DashboardClient() {
     );
   }
 
-  const todayTokens = data?.totals.today || '0';
   const weekTokens = data?.totals.week || '0';
   const monthTokens = data?.totals.month || '0';
+  const calMonthTokens = data?.totals.calMonth || '0';
   const totalTokens = data?.totals.total || '0';
 
   const chartData = (data?.last30 || []).map((d) => ({
@@ -136,14 +137,6 @@ export function DashboardClient() {
 
       <StatsGrid columns={4}>
         <KPICard
-          title="Today"
-          value={formatTokens(todayTokens)}
-          description="tokens"
-          icon={Zap}
-          loading={isLoading}
-          className="border-l-4 border-l-emerald-500/50"
-        />
-        <KPICard
           title="Last 7 Days"
           value={formatTokens(weekTokens)}
           description="tokens"
@@ -158,6 +151,14 @@ export function DashboardClient() {
           icon={Activity}
           loading={isLoading}
           className="border-l-4 border-l-violet-500/50"
+        />
+        <KPICard
+          title="This Month"
+          value={formatTokens(calMonthTokens)}
+          description="tokens"
+          icon={Zap}
+          loading={isLoading}
+          className="border-l-4 border-l-emerald-500/50"
         />
         <KPICard
           title="All Time"

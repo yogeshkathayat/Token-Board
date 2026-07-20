@@ -29,7 +29,7 @@ final class StatusBarController: NSObject {
     override init() {
         super.init()
 
-        popoverModel.onRefresh = { [weak self] in Task { await self?.refresh() } }
+        popoverModel.onRefresh = { [weak self] in Task { await self?.hardRefresh() } }
         popoverModel.onOpenDashboard = { [weak self] in self?.openDashboard() }
         popoverModel.onOpenSettings = { [weak self] in self?.openSettingsWindow() }
         popoverModel.onQuit = { NSApp.terminate(nil) }
@@ -68,6 +68,32 @@ final class StatusBarController: NSObject {
             popoverModel.errorText = "No local data"
         }
         updateStatusTitle()
+    }
+
+    // The refresh button: kick the background sync agent to regenerate summary.json, wait for
+    // it to change (up to ~6s), then re-read. Falls back to a plain re-read if the agent
+    // isn't installed or the file doesn't change in time.
+    private func hardRefresh() async {
+        popoverModel.isRefreshing = true
+        let before = ConfigStore.readSummaryData()
+        await Task.detached(priority: .userInitiated) {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+            p.arguments = ["kickstart", "-k", "gui/\(getuid())/com.tokenboard.sync"]
+            do {
+                try p.run()
+                p.waitUntilExit()
+            } catch {
+                // agent not installed — nothing to kick; we'll just re-read below
+            }
+        }.value
+        for _ in 0..<12 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let now = ConfigStore.readSummaryData()
+            if now != before { break }
+        }
+        popoverModel.isRefreshing = false
+        await refresh()
     }
 
     private func updateStatusTitle() {

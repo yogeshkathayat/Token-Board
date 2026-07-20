@@ -8,6 +8,7 @@ import SwiftUI
 final class PopoverModel: ObservableObject {
     @Published var summary: UsageSummary?
     @Published var errorText: String?
+    @Published var isRefreshing: Bool = false
 
     var onRefresh: () -> Void = {}
     var onOpenDashboard: () -> Void = {}
@@ -78,12 +79,18 @@ struct PopoverView: View {
             Spacer()
 
             Button(action: { model.onRefresh() }) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(Color.primary.opacity(0.06)))
+                Group {
+                    if model.isRefreshing {
+                        ProgressView().controlSize(.small).scaleEffect(0.7)
+                    } else {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold))
+                    }
+                }
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.primary.opacity(0.06)))
             }
             .buttonStyle(.plain)
+            .disabled(model.isRefreshing)
         }
     }
 

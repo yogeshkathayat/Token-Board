@@ -39,7 +39,7 @@ function startExpr(tz: string, unit: 'day' | 'week' | 'month'): string {
 
 interface UsageSummary {
   tz: string;
-  totals: { today: string; week: string; month: string; total: string };
+  totals: { today: string; week: string; month: string; calMonth: string; total: string };
   by_source: Array<{ source: string; total_tokens: string }>;
   by_model: Array<{ model: string; total_tokens: string }>;
   last30: Array<{ day: string; total_tokens: string }>;
@@ -67,6 +67,7 @@ export async function getUsageSummary(userId: string, tz?: string): Promise<Usag
   const today = await sumSince(userId, startExpr(zone, 'day'));
   const week = await sumSince(userId, lastNDaysStartExpr(zone, 7)); // last 7 days (rolling)
   const month = await sumSince(userId, lastNDaysStartExpr(zone, 30)); // last 30 days (rolling)
+  const calMonth = await sumSince(userId, startExpr(zone, 'month')); // this calendar month
   const totalRows = await query<{ total_tokens: string }>(
     `SELECT COALESCE(sum(total_tokens), 0)::text AS total_tokens
        FROM tb_usage_buckets WHERE user_id = $1`,
@@ -107,7 +108,7 @@ export async function getUsageSummary(userId: string, tz?: string): Promise<Usag
 
   return {
     tz: zone,
-    totals: { today, week, month, total: totalRows[0]?.total_tokens || '0' },
+    totals: { today, week, month, calMonth, total: totalRows[0]?.total_tokens || '0' },
     by_source,
     by_model,
     last30,
